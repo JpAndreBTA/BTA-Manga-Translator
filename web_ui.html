@@ -2244,6 +2244,7 @@ const I18N = {
     page_of:          "Page %1 / %2",
     chars_count:      "%1 bubbles",
     pick_images:      "Please choose images",
+    job_not_ready:    "Upload the chapter first, then start the batch translation",
     prompt_job_id:    "Enter job_id (visible while processing):",
     job_not_found:    "Could not load: %1",
     open_page_first:  "Open a page first",
@@ -2346,6 +2347,7 @@ const I18N = {
     page_of:          "Pagina %1 / %2",
     chars_count:      "%1 baloes",
     pick_images:      "Escolha as imagens",
+    job_not_ready:    "Envie o capitulo primeiro, depois inicie a traducao em lote",
     prompt_job_id:    "Digite o job_id:",
     job_not_found:    "Nao foi possivel carregar: %1",
     open_page_first:  "Abra uma pagina primeiro",
@@ -2842,7 +2844,7 @@ uploadZone.onclick = (event) => {
 };
 if (startUploadButton) startUploadButton.onclick = () => {
   if (uploadedJobReady && currentJobId) startCurrentJob();
-  else fileInput.click();
+  else log(currentJobId ? t("job_not_ready") : t("pick_images"), 'err');
 };
 if (chapterUrlButton) chapterUrlButton.onclick = (event) => {
   event.stopPropagation();
@@ -2907,10 +2909,24 @@ async function remoteImageToFile(url, index = 0, namePrefix = 'web-image') {
   const blob = await response.blob();
   const headerName = response.headers.get('X-BTA-Filename') || '';
   const urlName = decodeURIComponent((new URL(url)).pathname.split('/').pop() || '');
-  const ext = (headerName.match(/\.[a-z0-9]+$/i) || urlName.match(/\.[a-z0-9]+$/i) || ['.png'])[0];
+  const contentTypeExt = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/bmp': '.bmp',
+    'image/tiff': '.tiff',
+  }[(blob.type || '').split(';')[0].toLowerCase()] || '';
+  const headerExt = (headerName.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase();
+  const urlExt = (urlName.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase();
+  const ext = SUPPORTED_UPLOAD_EXTENSIONS.includes(headerExt) ? headerExt
+    : SUPPORTED_UPLOAD_EXTENSIONS.includes(contentTypeExt) ? contentTypeExt
+    : SUPPORTED_UPLOAD_EXTENSIONS.includes(urlExt) ? urlExt
+    : '.png';
   const padded = String(index + 1).padStart(3, '0');
-  const baseName = (urlName || `${namePrefix}-${padded}${ext}`).replace(/[^\w.\-]+/g, '_');
-  const filename = `${padded}_${baseName.includes('.') ? baseName : `${baseName}${ext}`}`;
+  const rawBaseName = (urlName || headerName || `${namePrefix}-${padded}`).replace(/\.[a-z0-9]+$/i, '');
+  const baseName = (rawBaseName || `${namePrefix}-${padded}`).replace(/[^\w.\-]+/g, '_');
+  const filename = `${padded}_${baseName}${ext}`;
   return new File([blob], filename, { type: blob.type || 'image/png' });
 }
 
@@ -3067,8 +3083,11 @@ async function startUpload(files, options = {}) {
   // Pre-create skeleton cards immediately so user sees progress
   $('pages-grid').innerHTML = '';
   for (const key of Object.keys(processingCards)) delete processingCards[key];
+  currentJobId = null;
+  uploadedJobReady = false;
   currentJobPages = [];   // reset stale data from previous run
   currentEditPage = null;
+  $('job-id-pill').classList.remove('visible');
   // Export buttons are disabled until the job finishes
   $('btn-export-zip').disabled = true;
   $('btn-export-cbz').disabled = true;
@@ -3098,10 +3117,16 @@ async function startUpload(files, options = {}) {
 
   log(t("upload_loading", files.length));
   $('progress-wrap').style.display = 'block';
+  if (startUploadButton) startUploadButton.disabled = true;
 
   try {
     const r = await fetch('/api/upload', { method: 'POST', body: form });
-    if (!r.ok) throw new Error('Upload failed');
+    if (!r.ok) {
+      const text = await r.text();
+      let message = text || 'Upload failed';
+      try { message = JSON.parse(text).detail || message; } catch {}
+      throw new Error(message);
+    }
     const data = await r.json();
     currentJobId = data.job_id;
     uploadedJobReady = true;
@@ -3114,6 +3139,7 @@ async function startUpload(files, options = {}) {
     if (options.autoStart) startCurrentJob();
   } catch (e) {
     log(t("upload_error", e.message), 'err');
+    if (startUploadButton) startUploadButton.disabled = false;
   }
 }
 

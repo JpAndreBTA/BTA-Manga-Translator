@@ -78,6 +78,7 @@ def _job_meta_path(job_id: str) -> Path:
 
 
 def _write_job_meta(job_id: str, job: dict):
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
     meta = {
         "job_id": job_id,
         "status": job.get("status", "ready"),
@@ -87,6 +88,29 @@ def _write_job_meta(job_id: str, job: dict):
         "config": job.get("config", {}),
     }
     _job_meta_path(job_id).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _image_ext_from_content_type(content_type: str | None) -> str:
+    ext_by_type = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tiff",
+    }
+    return ext_by_type.get((content_type or "").split(";")[0].lower(), "")
+
+
+def _safe_upload_filename(filename: str | None, index: int, content_type: str | None = None) -> str | None:
+    name = Path(filename or "").name
+    stem = Path(name).stem or f"page_{index:03d}"
+    ext = Path(name).suffix.lower()
+    if ext not in mt.SUPPORTED_EXTENSIONS:
+        ext = _image_ext_from_content_type(content_type)
+    if ext not in mt.SUPPORTED_EXTENSIONS:
+        return None
+    return f"{index:03d}_{_safe_slug(stem, f'page_{index:03d}')}{ext}"
 
 
 def _read_job_meta(job_id: str) -> dict:
@@ -431,16 +455,7 @@ async def fetch_remote_image(payload: dict):
     if len(data) > 30 * 1024 * 1024:
         raise HTTPException(413, "Image is larger than 30 MB")
 
-    ext_by_type = {
-        "image/jpeg": ".jpg",
-        "image/jpg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "image/gif": ".gif",
-        "image/bmp": ".bmp",
-        "image/tiff": ".tiff",
-    }
-    ext = ext_by_type.get(content_type) or Path(parsed.path).suffix.lower()
+    ext = _image_ext_from_content_type(content_type) or Path(parsed.path).suffix.lower()
     if ext not in mt.SUPPORTED_EXTENSIONS:
         raise HTTPException(415, "URL does not point to a supported image")
 
@@ -578,11 +593,11 @@ async def upload_chapter(
     upload_dir.mkdir(parents=True, exist_ok=True)
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    for f in files:
-        ext = Path(f.filename).suffix.lower()
-        if ext not in mt.SUPPORTED_EXTENSIONS:
+    for index, f in enumerate(files, start=1):
+        safe_name = _safe_upload_filename(f.filename, index, f.content_type)
+        if not safe_name:
             continue
-        target = upload_dir / f.filename
+        target = upload_dir / safe_name
         with open(target, "wb") as out:
             shutil.copyfileobj(f.file, out)
 
