@@ -55,14 +55,16 @@ JOBS: dict = {}
 LIVE_TRANSLATION_CACHE: dict[tuple[str, ...], str] = {}
 LIVE_OCR_CACHE: dict[tuple[str, int, int, int, int], str] = {}
 LIVE_DETECTION_CACHE: dict[str, list[dict]] = {}
-LIVE_IMAGE_RESULT_CACHE: dict[tuple[str, str, str, str], dict] = {}
+LIVE_IMAGE_RESULT_CACHE: dict[tuple[str, ...], dict] = {}
 WEB_OCR_CONCURRENCY = max(1, int(os.environ.get("BTA_WEB_OCR_CONCURRENCY", "5") or "5"))
 WEB_TRANSLATION_BATCH_SIZE = max(1, int(os.environ.get("BTA_WEB_TRANSLATION_BATCH", "5") or "5"))
 WEB_TRANSLATION_CONCURRENCY = max(1, int(os.environ.get("BTA_WEB_TRANSLATION_CONCURRENCY", "2") or "2"))
+WEB_LLM_CONCURRENCY = max(1, int(os.environ.get("BTA_WEB_LLM_CONCURRENCY", "2") or "2"))
 WEB_CACHE_LIMIT = max(20, int(os.environ.get("BTA_WEB_CACHE_LIMIT", "240") or "240"))
 WEB_SPLIT_TEXT_GROUPS = os.environ.get("BTA_WEB_SPLIT_TEXT_GROUPS", "1").strip().lower() in ("1", "true", "yes", "on")
 WEB_SPLIT_VISUAL_TEXT = os.environ.get("BTA_WEB_SPLIT_VISUAL_TEXT", "1").strip().lower() in ("1", "true", "yes", "on")
-WEB_DETECTION_THRESHOLD = max(0.2, min(0.8, float(os.environ.get("BTA_WEB_DETECTION_THRESHOLD", "0.38") or "0.38")))
+WEB_DETECTION_THRESHOLD = max(0.2, min(0.8, float(os.environ.get("BTA_WEB_DETECTION_THRESHOLD", "0.32") or "0.32")))
+LIVE_LLM_SEMAPHORE = asyncio.Semaphore(WEB_LLM_CONCURRENCY)
 
 
 def _safe_slug(value: str, fallback: str = "untitled") -> str:
@@ -1119,6 +1121,105 @@ def _expanded_overlay_box(text_box: dict, image_width: int, image_height: int) -
     return _clamp_box(x - pad_x, y - pad_y, w + pad_x * 2, h + pad_y * 2, image_width, image_height)
 
 
+def _overlaps_existing_text(candidate: dict, existing: list[dict]) -> bool:
+    cx, cy, cw, ch = _box_from_bubble(candidate, "text")
+    candidate_area = max(1, cw * ch)
+    for bubble in existing:
+        overlap = _intersection_area(candidate, bubble)
+        if overlap / candidate_area > 0.38:
+            return True
+        if _box_overlap_fraction(candidate, bubble, "text") > 0.55:
+            return True
+    return False
+
+
+def _fallback_high_contrast_text_regions(
+    image_pil: Image.Image,
+    existing: list[dict],
+    image_width: int,
+    image_height: int,
+) -> list[dict]:
+    rgb = mt.np.asarray(image_pil.convert("RGB"))
+    if rgb.size == 0:
+        return []
+
+    gray = mt.cv2.cvtColor(rgb, mt.cv2.COLOR_RGB2GRAY)
+    image_area = max(1, image_width * image_height)
+    masks = [
+        mt.cv2.adaptiveThreshold(gray, 255, mt.cv2.ADAPTIVE_THRESH_GAUSSIAN_C, mt.cv2.THRESH_BINARY_INV, 31, 8),
+        mt.cv2.adaptiveThreshold(gray, 255, mt.cv2.ADAPTIVE_THRESH_GAUSSIAN_C, mt.cv2.THRESH_BINARY, 31, 8),
+    ]
+    region_boxes: list[tuple[int, int, int, int]] = []
+
+    for mask in masks:
+        count, labels, stats, _ = mt.cv2.connectedComponentsWithStats(mask, 8)
+        clean = mt.np.zeros_like(mask)
+        for label in range(1, count):
+            x, y, w, h, area = stats[label]
+            if area < max(5, image_area * 0.000006):
+                continue
+            if area > image_area * 0.010:
+                continue
+            if h < 5 or w < 2:
+                continue
+            if h > image_height * 0.12 or w > image_width * 0.48:
+                continue
+            if w > image_width * 0.24 and h < 9:
+                continue
+            clean[labels == label] = 255
+
+        if mt.np.count_nonzero(clean) < 10:
+            continue
+
+        kernel_w = max(9, min(42, image_width // 22))
+        kernel_h = max(3, min(14, image_height // 130))
+        kernel = mt.cv2.getStructuringElement(mt.cv2.MORPH_RECT, (kernel_w, kernel_h))
+        grouped = mt.cv2.morphologyEx(clean, mt.cv2.MORPH_CLOSE, kernel, iterations=1)
+        grouped = mt.cv2.dilate(grouped, mt.cv2.getStructuringElement(mt.cv2.MORPH_RECT, (3, 3)), iterations=1)
+        count, labels, stats, _ = mt.cv2.connectedComponentsWithStats(grouped, 8)
+        for label in range(1, count):
+            x, y, w, h, area = stats[label]
+            box_area = max(1, w * h)
+            density = area / box_area
+            if w < 24 or h < 10:
+                continue
+            if box_area > image_area * 0.16:
+                continue
+            if density < 0.025 or density > 0.72:
+                continue
+            if w > image_width * 0.78 and h > image_height * 0.18:
+                continue
+            region_boxes.append(_clamp_box(x - 4, y - 3, w + 8, h + 6, image_width, image_height))
+
+    fallback: list[dict] = []
+    for x, y, w, h in sorted(region_boxes, key=lambda box: (box[1], box[0])):
+        candidate = {
+            "class": "text_free",
+            "x": x,
+            "y": y,
+            "width": w,
+            "height": h,
+            "text_x": x,
+            "text_y": y,
+            "text_w": w,
+            "text_h": h,
+            "confidence": 0.24,
+        }
+        if _looks_like_page_or_panel_box(candidate, image_width, image_height):
+            continue
+        if _overlaps_existing_text(candidate, existing + fallback):
+            continue
+        ox, oy, ow, oh = _expanded_overlay_box(candidate, image_width, image_height)
+        candidate["overlay_x"] = ox
+        candidate["overlay_y"] = oy
+        candidate["overlay_w"] = ow
+        candidate["overlay_h"] = oh
+        candidate["shape"] = "soft"
+        fallback.append(candidate)
+
+    return fallback
+
+
 def _attach_overlay_boxes(detections: list[dict], image_width: int, image_height: int) -> list[dict]:
     containers = [
         b for b in detections
@@ -1470,6 +1571,7 @@ def _detect_text_bubbles(image_path: Path) -> tuple[object, list[dict]]:
     image_pil = Image.fromarray(mt.cv2.cvtColor(img_cv, mt.cv2.COLOR_BGR2RGB))
     bubbles = mt.detect_bubbles(image_pil, threshold=WEB_DETECTION_THRESHOLD)
     text_bubbles = _attach_overlay_boxes(bubbles, image_pil.size[0], image_pil.size[1])
+    text_bubbles.extend(_fallback_high_contrast_text_regions(image_pil, text_bubbles, image_pil.size[0], image_pil.size[1]))
     split_bubbles = []
     for bubble in text_bubbles:
         split_bubbles.extend(_split_bubble_by_visual_text(image_pil.convert("RGB"), bubble, image_pil.size[0], image_pil.size[1]))
@@ -1485,6 +1587,7 @@ def _detect_text_bubbles_cached(image_path: Path, image_key: str) -> tuple[objec
     image_pil = Image.fromarray(mt.cv2.cvtColor(img_cv, mt.cv2.COLOR_BGR2RGB))
     bubbles = mt.detect_bubbles(image_pil, threshold=WEB_DETECTION_THRESHOLD)
     text_bubbles = _attach_overlay_boxes(bubbles, image_pil.size[0], image_pil.size[1])
+    text_bubbles.extend(_fallback_high_contrast_text_regions(image_pil, text_bubbles, image_pil.size[0], image_pil.size[1]))
     split_bubbles = []
     rgb = image_pil.convert("RGB")
     for bubble in text_bubbles:
@@ -1571,7 +1674,7 @@ def _ocr_region_preserve_layout(img_cv, bubble: dict, index: int) -> str:
 
 SLANG_ADAPTATION_GUIDES = {
     "off": (
-        "Slang adaptation: disabled. Translate faithfully and naturally, but do not add extra slang, memes, or regionalized expressions "
+        "Slang adaptation: disabled. Translate faithfully and naturally, but do not add extra slang, memes, jokes, or regionalized expressions "
         "that are not implied by the source."
     ),
     "literal": (
@@ -1587,12 +1690,12 @@ SLANG_ADAPTATION_GUIDES = {
         "natural colloquial phrasing. Do not force memes or excessive slang."
     ),
     "br_2026": (
-        "Slang adaptation: Brazil 2026. When the character voice supports it, use contemporary Brazilian youth/internet casual speech. "
-        "Keep it readable nationwide, avoid dated memes, and never change serious/formal characters into jokey ones."
+        "Slang adaptation: Brazil 2026. Use natural Brazilian Portuguese for manga/manhwa readers. Only use contemporary casual wording "
+        "when the character is already casual. Keep serious, historical, formal, threatening, or narration lines serious."
     ),
     "us_2026": (
-        "Slang adaptation: United States 2026. When appropriate, use current US casual dialogue and internet-era phrasing. "
-        "Avoid overdoing slang, preserve tone, and keep formal or historical speech formal."
+        "Slang adaptation: United States 2026. Use natural US English. Only use current casual phrasing when the character is already casual. "
+        "Avoid meme-speak, preserve tone, and keep formal or historical speech formal."
     ),
     "jp_2026": (
         "Slang adaptation: Japan 2026. When appropriate, localize casual speech with modern Japanese youth/media flavor expressed naturally "
@@ -1608,7 +1711,7 @@ SLANG_ADAPTATION_GUIDES = {
     ),
     "global_auto": (
         "Slang adaptation: global automatic. Adapt casual dialogue naturally to the target language and region when the source voice supports it. "
-        "Use current, readable phrasing, preserve character voice, and avoid dated memes or excessive slang."
+        "Use current, readable phrasing, preserve character voice, and avoid memes, catchphrases, or excessive slang."
     ),
 }
 SLANG_ADAPTATION_TARGET_LANGS = {
@@ -1686,7 +1789,7 @@ def _slang_adaptation_instruction(mode: str | None, target_lang: str) -> str:
     return (
         f"{guide}\n"
         f"The final text must be written in {target_locale}. Do not add translator notes. "
-        "Do not insert slang where the source is neutral, ceremonial, old-fashioned, threatening, or serious."
+        "Accuracy and character intent are more important than slang. Do not insert slang where the source is neutral, ceremonial, old-fashioned, threatening, or serious."
     )
 
 
@@ -1695,7 +1798,7 @@ def _target_lang_for_slang_adaptation(mode: str | None, target_lang: str) -> str
     return SLANG_ADAPTATION_TARGET_LANGS.get(normalized) or target_lang
 
 
-def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_model: str, adaptation_mode: str = "natural_br") -> str:
+def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_model: str, adaptation_mode: str = "auto") -> str:
     cleaned = _clean_visible_text_preserve_lines(text)
     if not cleaned:
         return ""
@@ -1717,7 +1820,10 @@ def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_mode
     prompts = [f"""Translate this manga/comic speech bubble to {effective_target_lang}.
 {source_hint}
 {_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
-Keep it short and natural for a speech bubble.
+Translate the actual meaning, not just word-by-word OCR fragments.
+Preserve names, titles, ranks, numbers, and cause/effect.
+Keep it concise enough for a speech bubble, but do not drop important meaning.
+If the OCR is partially corrupted, translate only the confident readable content without inventing missing facts.
 Keep paragraph breaks if they are present. Return only the translated text. No notes, no quotes.
 
 OCR TEXT:
@@ -1726,6 +1832,8 @@ OCR TEXT:
 {source_hint}
 {_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
 Do not ask for OCR. Do not explain. Do not mention policies or limitations.
+Preserve the original meaning, names, titles, ranks, numbers, and tone.
+Do not summarize, embellish, or add facts that are not in the OCR.
 Return only the translated speech bubble text. Keep paragraph breaks if useful.
 
 OCR:
@@ -1752,7 +1860,7 @@ OCR:
     return result
 
 
-def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, target_lang: str, llm_model: str, adaptation_mode: str = "natural_br") -> dict[int, str]:
+def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, target_lang: str, llm_model: str, adaptation_mode: str = "auto") -> dict[int, str]:
     cleaned_items = []
     for idx, text in items:
         cleaned = _clean_visible_text_preserve_lines(text)
@@ -1785,12 +1893,15 @@ def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, t
     prompt = f"""Translate these manga/comic speech bubbles to {effective_target_lang}.
 {source_hint}
 {_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
+Translate for meaning and coherence first, then naturalness.
+Preserve names, titles, ranks, numbers, relationships, threats, jokes, and cause/effect.
 Keep translations natural for speech bubbles, but do not remove meaning just to make the line shorter.
 Preserve paragraph breaks when present.
-The entries are in manga reading order and may be consecutive parts of the same visible bubble or conversation.
-Use nearby entries as context for pronouns, tone, omitted subjects, and OCR fragments.
-If an entry is a fragment, translate it as the missing part of that same sentence, not as a standalone sentence.
-Do not merge entries, split entries, summarize, or move meaning between bubbles.
+The entries are in manga reading order and may be consecutive parts of the same page.
+Use nearby entries only as context for pronouns, tone, and speaker intent.
+Each entry must remain an independent translation of its own OCR text.
+Do not merge entries, split entries, summarize, invent missing facts, or move meaning between bubbles.
+If OCR is partially corrupted, translate the confident readable content and keep the result coherent.
 Return ONLY a JSON array in the same order, using this schema:
 [{{"idx": 1, "translation": "translated text"}}]
 
@@ -1910,6 +2021,18 @@ def _is_bad_bubble_ocr(text: str) -> bool:
         "provide the ocr",
         "no text",
         "cannot read",
+        "discord",
+        "scanlation",
+        "scanlator",
+        "read more",
+        "more chapters",
+        "chapter on",
+        "chapter at",
+        "follow us",
+        "support us",
+        "website",
+        "watermark",
+        "official site",
     )
     if any(fragment in lowered for fragment in blocked):
         return True
@@ -2190,7 +2313,8 @@ async def translate_web_image_bubbles_stream(
 
             async def run_translation_batch(batch: list[tuple[int, dict]]):
                 async with translate_sem:
-                    return await flush_translation_batch(batch)
+                    async with LIVE_LLM_SEMAPHORE:
+                        return await flush_translation_batch(batch)
 
             def queue_translation_batch(batch: list[tuple[int, dict]]):
                 if batch:

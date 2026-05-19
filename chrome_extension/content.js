@@ -30,11 +30,13 @@ const bubbleOverlayEntries = new Set();
 const activeTranslations = new Map();
 const pendingTranslationGroups = new Map();
 const translatedResponses = new Map();
-const TRANSLATION_CONCURRENCY = 3;
+const TRANSLATION_CONCURRENCY = 5;
 const TRANSLATION_TIMEOUT_MS = 2 * 60 * 1000;
 const AUTO_FAILURE_RETRY_MS = 12000;
 const AUTO_HEARTBEAT_MS = 800;
-const AUTO_BATCH_LIMIT = 3;
+const AUTO_BATCH_LIMIT = 5;
+const AUTO_BACKGROUND_BATCH_LIMIT = 1;
+const AUTO_IDLE_BACKGROUND_BATCH_LIMIT = 3;
 const AUTO_RETRY_COOLDOWN_MS = 3500;
 const CANDIDATE_SELECTOR = "img, img[data-src], img[data-original], img[data-lazy-src], img[data-original-src], img[data-srcset], img[data-lazy], img[data-image], img[data-full], img[data-url], img[data-cfsrc], canvas, [style*='background-image']";
 let queueRunning = false;
@@ -1172,6 +1174,19 @@ function isInAutoPrefetchWindow(candidate) {
     && candidate.top <= viewportBottom + AUTO_PREFETCH_AHEAD_PX;
 }
 
+function isAutoPriorityCandidate(candidate) {
+  return autoCandidateRank(candidate) === 0 || isInAutoPrefetchWindow(candidate);
+}
+
+function pendingAutoBackgroundCount() {
+  let count = 0;
+  pendingTranslationGroups.forEach((group) => {
+    const candidates = [...(group.candidates || [])];
+    if (!candidates.some(isAutoPriorityCandidate)) count += 1;
+  });
+  return count;
+}
+
 function collectCandidates({ visibleOnly = false, prioritizeViewport = false, ignoreFailure = false } = {}) {
   const seenSources = new Set();
   return [...document.querySelectorAll(CANDIDATE_SELECTOR)]
@@ -1207,7 +1222,8 @@ function collectAutoCandidates() {
   };
   add(collectCandidates({ visibleOnly: true, prioritizeViewport: true, ignoreFailure: true }));
   add(collectCandidates({ visibleOnly: false, prioritizeViewport: true, ignoreFailure: true }).filter(isInAutoPrefetchWindow));
-  while (autoAttemptedAtBySrc.size > 300) {
+  add(collectCandidates({ visibleOnly: false, prioritizeViewport: true, ignoreFailure: true }));
+  while (autoAttemptedAtBySrc.size > 600) {
     autoAttemptedAtBySrc.delete(autoAttemptedAtBySrc.keys().next().value);
   }
   return merged;
@@ -1218,7 +1234,15 @@ function runAutoTranslateTick() {
   observeAutoTranslateTargets();
   const slots = Math.max(0, AUTO_BATCH_LIMIT - pendingTranslationGroups.size);
   if (!slots) return;
-  const candidates = collectAutoCandidates().slice(0, slots);
+  const allCandidates = collectAutoCandidates();
+  const priorityCandidates = allCandidates.filter(isAutoPriorityCandidate);
+  const backgroundCandidates = allCandidates.filter((candidate) => !isAutoPriorityCandidate(candidate));
+  const backgroundLimit = priorityCandidates.length ? AUTO_BACKGROUND_BATCH_LIMIT : AUTO_IDLE_BACKGROUND_BATCH_LIMIT;
+  const backgroundSlots = Math.max(0, backgroundLimit - pendingAutoBackgroundCount());
+  const candidates = [
+    ...priorityCandidates.slice(0, slots),
+    ...backgroundCandidates.slice(0, Math.min(backgroundSlots, Math.max(0, slots - priorityCandidates.length)))
+  ].slice(0, slots);
   candidates.forEach((candidate) => {
     autoAttemptedAtBySrc.set(candidate.src, Date.now());
     failedAt.delete(candidate.el);
