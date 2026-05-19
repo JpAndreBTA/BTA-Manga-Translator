@@ -17,13 +17,13 @@
               <strong>BTA</strong>
               <span>MangaTranslate</span>
             </div>
-            <small data-i18n="poweredBy">powered by BTA Studio</small>
+            <small data-i18n="poweredBy">por BTA Studio</small>
           </div>
         </div>
 
         <div class="top-actions">
           <label class="ui-lang" data-i18n-title="uiLanguageTitle">
-            <span aria-hidden="true">文</span>
+            <span aria-hidden="true">A</span>
             <select id="uiLang" aria-label="Idioma da interface">
               <option value="pt">PT</option>
               <option value="en">EN</option>
@@ -42,7 +42,7 @@
         </div>
       </header>
 
-      <nav class="tabs" data-i18n-aria-label="navLabel" aria-label="Navegação do popup">
+      <nav class="tabs" data-i18n-aria-label="navLabel" aria-label="Navegacao do popup">
         <button class="tab active" data-tab="translate" data-i18n="tabTranslate">TRADUZIR</button>
         <button class="tab" data-tab="tools" data-i18n="tabTools">FERRAMENTAS</button>
         <button class="tab" data-tab="settings" data-i18n="tabSettings">AJUSTES</button>
@@ -51,13 +51,13 @@
       <main class="panel-wrap">
         <section id="panel-translate" class="panel active">
           <div class="card">
-            <h2><span class="section-icon">»</span><span data-i18n="sectionLanguage">TRADUÇÃO DE IDIOMA</span></h2>
+            <h2><span class="section-icon">&gt;</span><span data-i18n="sectionLanguage">TRADUCAO DE IDIOMA</span></h2>
             <div class="language-grid">
               <label>
                 <span data-i18n="sourceLabel">ORIGEM</span>
                 <select id="sourceLang"></select>
               </label>
-              <button id="swapLangs" class="swap-btn" data-i18n-title="swapTitle" title="Inverter idiomas">⇄</button>
+              <button id="swapLangs" class="swap-btn" data-i18n-title="swapTitle" title="Inverter idiomas">&lt;&gt;</button>
               <label>
                 <span data-i18n="targetLabel">DESTINO</span>
                 <select id="targetLang"></select>
@@ -66,50 +66,60 @@
           </div>
 
           <div class="card">
-            <h2><span class="section-icon">↯</span><span data-i18n="sectionAi">INTELIGÊNCIA ARTIFICIAL</span></h2>
             <label class="switch-row">
               <span>
-                <strong data-i18n="autoTitle">Auto-Tradução de Páginas</strong>
-                <small data-i18n="autoDesc">Traduzir novas páginas automaticamente</small>
+                <strong><span class="section-icon">#</span> <span data-i18n="sectionAdaptation">ADAPTACAO DE GIRIAS</span></strong>
+                <small data-i18n="adaptationDesc">Adapta automaticamente ao idioma de destino</small>
+              </span>
+              <input id="slangAdaptation" type="checkbox" checked>
+            </label>
+          </div>
+
+          <div class="card">
+            <h2><span class="section-icon">AI</span><span data-i18n="sectionAi">INTELIGENCIA ARTIFICIAL</span></h2>
+            <label class="switch-row">
+              <span>
+                <strong data-i18n="autoTitle">Auto-Traducao de Paginas</strong>
+                <small data-i18n="autoDesc">Traduzir novas paginas automaticamente</small>
               </span>
               <input id="autoTranslate" type="checkbox">
             </label>
             <label class="switch-row">
               <span>
-                <strong data-i18n="fastTitle">Modo Rápido</strong>
-                <small data-i18n="fastDesc">Pula análise contextual para responder mais rápido</small>
+                <strong data-i18n="fastTitle">Modo Rapido</strong>
+                <small data-i18n="fastDesc">Pula analise contextual para responder mais rapido</small>
               </span>
               <input id="fastMode" type="checkbox" checked>
             </label>
           </div>
 
           <button id="translateVisible" class="primary-action">
-            <span data-i18n="translateButton">TRADUZIR PÁGINA ATUAL</span>
-            <span class="play-dot">▷</span>
+            <span data-i18n="translateButton">TRADUZIR PAGINA ATUAL</span>
+            <span class="play-dot">&gt;</span>
           </button>
 
           <div class="mini-row">
-            <span id="sessionInfo" data-i18n="sessionWaiting">Sessão atual: aguardando</span>
-            <button id="resetPage" data-i18n="resetPage">Resetar Página</button>
+            <span id="sessionInfo" data-i18n="sessionWaiting">Sessao atual: aguardando</span>
+            <button id="resetPage" data-i18n="resetPage">Resetar Pagina</button>
           </div>
         </section>
 
         <section id="panel-tools" class="panel">
           <div class="tool-grid">
             <button id="snipTool" class="tool-tile">
-              <span class="tile-icon">＋</span>
-              <strong data-i18n="snipTitle">Recortar Área</strong>
+              <span class="tile-icon">+</span>
+              <strong data-i18n="snipTitle">Recortar Area</strong>
               <small data-i18n="snipDesc">Snip & Ask AI</small>
             </button>
             <button id="paintTool" class="tool-tile">
-              <span class="tile-icon">⌕</span>
+              <span class="tile-icon">x</span>
               <strong data-i18n="paintTitle">Pintura Manual</strong>
               <small data-i18n="paintDesc">Apagar texto</small>
             </button>
           </div>
 
           <div class="card">
-            <h2><span class="section-icon">≋</span><span data-i18n="sectionStyles">ESTILOS GLOBAIS DE RENDERIZAÇÃO</span></h2>
+            <h2><span class="section-icon">*</span><span data-i18n="sectionStyles">ESTILOS GLOBAIS DE RENDERIZACAO</span></h2>
             <label class="range-row">
               <span data-i18n="fontSizeLabel">Tamanho da Fonte</span>
               <strong id="fontSizeValue">100%</strong>
@@ -121,12 +131,12 @@
               <input id="outlineSize" type="range" min="0" max="96" value="4">
             </label>
             <label class="range-row">
-              <span data-i18n="opacityLabel">Opacidade do Balão</span>
+              <span data-i18n="opacityLabel">Opacidade do Balao</span>
               <strong id="opacityValue">100%</strong>
               <input id="balloonOpacity" type="range" min="20" max="100" value="100">
             </label>
             <label class="stack-field">
-              <span data-i18n="fontFamilyLabel">Família da Fonte</span>
+              <span data-i18n="fontFamilyLabel">Familia da Fonte</span>
               <select id="fontFamily">
                 <option>Anime Ace</option>
                 <option>Anime Sans</option>
@@ -140,33 +150,25 @@
 
         <section id="panel-settings" class="panel">
           <div class="card">
-            <h2><span class="section-icon">◎</span><span data-i18n="sectionProvider">MOTOR DE TRADUÇÃO AI</span></h2>
+            <h2><span class="section-icon">O</span><span data-i18n="sectionProvider">MOTOR DE TRADUCAO AI</span></h2>
             <label class="stack-field">
-              <span data-i18n="engineLabel">Motor de Tradução Ativo</span>
+              <span data-i18n="engineLabel">Motor de Traducao Ativo</span>
               <select id="engine">
                 <option data-i18n="engineBta">BTA Engine Ultra v2.5 (Recomendado)</option>
                 <option data-i18n="engineGemma">Ollama Local - Gemma 3</option>
                 <option data-i18n="engineLlava">Ollama Local - LLaVA</option>
               </select>
             </label>
-            <label class="stack-field">
-              <span data-i18n="adaptationLabel">Modo de Adaptação de Gírias</span>
-              <select id="adaptation">
-                <option data-i18n="adaptFaithful">Fiel ao Contexto Ocidental</option>
-                <option data-i18n="adaptLiteral">Literal</option>
-                <option data-i18n="adaptNatural">Natural Brasileiro</option>
-              </select>
-            </label>
           </div>
 
           <div class="card">
-            <h2><span class="section-icon">▣</span><span data-i18n="sectionSystem">SISTEMA E ATALHOS</span></h2>
+            <h2><span class="section-icon">[]</span><span data-i18n="sectionSystem">SISTEMA E ATALHOS</span></h2>
             <div class="shortcut-row">
-              <span data-i18n="shortcutLabel">Atalho de Tradução Instantânea</span>
+              <span data-i18n="shortcutLabel">Atalho de Traducao Instantanea</span>
               <kbd>Alt + T</kbd>
             </div>
             <div class="mini-row inside">
-              <span data-i18n="exportConfig">Exportar Configurações</span>
+              <span data-i18n="exportConfig">Exportar Configuracoes</span>
               <button id="backupSettings" data-i18n="backupButton">Fazer Backup</button>
             </div>
           </div>
@@ -178,7 +180,7 @@
         <a id="helpLink" class="donate-btn" href="https://www.paypal.com/donate/?hosted_button_id=H33M9F9S2MZ38" target="_blank" rel="noreferrer">Donate</a>
       </footer>
 
-      <p id="status" class="status" role="status" data-i18n="statusUnchecked">Servidor: não verificado</p>
+      <p id="status" class="status" role="status" data-i18n="statusUnchecked">Servidor: nao verificado</p>
     </div>
 
     <script src="popup.js"></script>

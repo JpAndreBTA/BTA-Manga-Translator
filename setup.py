@@ -15,6 +15,12 @@ import os
 import sys
 import subprocess
 
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
+from ollama_utils import ensure_ollama_running, normalize_ollama_host, ollama_tags_url
+
 GREEN = "\033[92m"
 RED = "\033[91m"
 YELLOW = "\033[93m"
@@ -22,8 +28,7 @@ BLUE = "\033[94m"
 RESET = "\033[0m"
 DIM = "\033[2m"
 
-OLLAMA_URL = "http://localhost:11434"
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+OLLAMA_URL = normalize_ollama_host()
 HF_CACHE_DIR = os.path.join(PROJECT_DIR, "models", "huggingface")
 HF_TOKEN_KEYS = ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN")
 
@@ -145,11 +150,16 @@ def check_ollama():
     info("Checking Ollama...")
     try:
         import requests
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        ok_running, start_message = ensure_ollama_running(OLLAMA_URL, startup_timeout=20.0)
+        if start_message:
+            info(start_message)
+        if not ok_running:
+            raise RuntimeError(start_message)
+        r = requests.get(ollama_tags_url(OLLAMA_URL), timeout=5)
         data = r.json()
     except Exception as e:
         warn(f"Ollama is not reachable at {OLLAMA_URL} ({e})")
-        warn("Install from https://ollama.com and start it before translating.")
+        warn("Install from https://ollama.com or start it manually before translating.")
         warn("You can still launch the web UI to explore the interface.")
         return
 

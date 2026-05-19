@@ -1,4 +1,6 @@
 const SERVER = "http://localhost:8000";
+const BTA_BACKEND_HOSTNAMES = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
+const BTA_BACKEND_PORTS = new Set(["", "8000", "8001", "8002", "8003", "8004", "8005", "8006", "8007", "8008", "8009", "8010", "8011", "8012", "8013", "8014", "8015", "8016", "8017", "8018", "8019", "8020"]);
 
 const TRANSLATION_LANGUAGES = [
   { value: "Auto" },
@@ -47,7 +49,6 @@ const LANGUAGE_ALIASES = {
 };
 
 const LANGUAGE_VALUES = new Set(TRANSLATION_LANGUAGES.map((lang) => lang.value));
-
 const UI_TEXT = {
   pt: {
     htmlLang: "pt-BR",
@@ -80,15 +81,13 @@ const UI_TEXT = {
     outlineSizeLabel: "Tamanho do Contorno",
     opacityLabel: "Opacidade do Balão",
     fontFamilyLabel: "Família da Fonte",
+    sectionAdaptation: "ADAPTACAO DE GIRIAS",
     sectionProvider: "MOTOR DE TRADUÇÃO AI",
     engineLabel: "Motor de Tradução Ativo",
     engineBta: "BTA Engine Ultra v2.5 (Recomendado)",
     engineGemma: "Ollama Local - Gemma 3",
     engineLlava: "Ollama Local - LLaVA",
-    adaptationLabel: "Modo de Adaptação de Gírias",
-    adaptFaithful: "Fiel ao Contexto Ocidental",
-    adaptLiteral: "Literal",
-    adaptNatural: "Natural Brasileiro",
+    adaptationDesc: "Adapta automaticamente ao idioma de destino",
     sectionSystem: "SISTEMA E ATALHOS",
     shortcutLabel: "Atalho de Tradução Instantânea",
     exportConfig: "Exportar Configurações",
@@ -142,15 +141,13 @@ const UI_TEXT = {
     outlineSizeLabel: "Outline Size",
     opacityLabel: "Balloon Opacity",
     fontFamilyLabel: "Font Family",
+    sectionAdaptation: "SLANG ADAPTATION",
     sectionProvider: "AI TRANSLATION PROVIDER",
     engineLabel: "Active Translation Engine",
     engineBta: "BTA Engine Ultra v2.5 (Recommended)",
     engineGemma: "Ollama Local - Gemma 3",
     engineLlava: "Ollama Local - LLaVA",
-    adaptationLabel: "Slang Adaptation Mode",
-    adaptFaithful: "Faithful to Western Context",
-    adaptLiteral: "Literal",
-    adaptNatural: "Natural Brazilian",
+    adaptationDesc: "Automatically adapts to the target language",
     sectionSystem: "SYSTEM AND SHORTCUTS",
     shortcutLabel: "Instant Translation Shortcut",
     exportConfig: "Export Settings",
@@ -489,7 +486,8 @@ const defaults = {
   fontSize: 100,
   outlineSize: 4,
   balloonOpacity: 100,
-  fontFamily: "Anime Ace"
+  fontFamily: "Anime Ace",
+  slangAdaptation: true
 };
 
 const $ = (id) => document.getElementById(id);
@@ -557,7 +555,8 @@ function applyUiLanguage(lang) {
 
   document.querySelectorAll("[data-i18n]").forEach((node) => {
     const key = node.dataset.i18n;
-    if (text[key]) node.textContent = text[key];
+    const value = text[key] || UI_TEXT.en[key] || UI_TEXT.pt[key];
+    if (value) node.textContent = value;
   });
   document.querySelectorAll("[data-i18n-title]").forEach((node) => {
     const key = node.dataset.i18nTitle;
@@ -580,6 +579,19 @@ async function getActiveTab() {
   return tab;
 }
 
+function isBackendTab(tab) {
+  try {
+    const parsed = new URL(tab?.url || "");
+    return BTA_BACKEND_HOSTNAMES.has(parsed.hostname) && BTA_BACKEND_PORTS.has(parsed.port);
+  } catch {
+    return false;
+  }
+}
+
+function backendTabMessage() {
+  return "Abra a página do manga/manhwa e use a extensão nessa aba. O backend não deve ser traduzido.";
+}
+
 function readSettingsFromUi() {
   return {
     sourceLang: $("sourceLang").value,
@@ -590,12 +602,14 @@ function readSettingsFromUi() {
     fontSize: Number($("fontSize").value),
     outlineSize: Number($("outlineSize").value),
     balloonOpacity: Number($("balloonOpacity").value),
-    fontFamily: $("fontFamily").value
+    fontFamily: $("fontFamily").value,
+    slangAdaptation: $("slangAdaptation").checked
   };
 }
 
 async function notifyPageSettings(settings, liveOnly = false) {
   const tab = await getActiveTab();
+  if (isBackendTab(tab)) return;
   if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "bta-settings", settings, liveOnly });
 }
 
@@ -624,8 +638,14 @@ async function saveSettings(options = {}) {
   if (!options || options instanceof Event || typeof options !== "object") options = {};
   const { notifyPage = true, persist = true, liveOnly = false } = options;
   const settings = readSettingsFromUi();
+  const tab = await getActiveTab();
+  if (isBackendTab(tab) && settings.autoTranslate) {
+    settings.autoTranslate = false;
+    $("autoTranslate").checked = false;
+    setStatus(backendTabMessage(), true);
+  }
   if (persist) await chrome.storage.sync.set(settings);
-  if (notifyPage) await notifyPageSettings(settings, liveOnly);
+  if (notifyPage && !isBackendTab(tab)) await notifyPageSettings(settings, liveOnly);
   return settings;
 }
 
@@ -645,6 +665,11 @@ async function translateVisibleImages() {
   const currentSettings = await saveSettings({ notifyPage: false });
   const tab = await getActiveTab();
   if (!tab?.id) return;
+  if (isBackendTab(tab)) {
+    $("sessionInfo").textContent = backendTabMessage();
+    setStatus(backendTabMessage(), true);
+    return;
+  }
 
   const text = textFor();
   $("sessionInfo").textContent = text.translatingVisible;
@@ -691,6 +716,7 @@ function bindUi() {
   $("targetLang").addEventListener("change", saveSettings);
   $("autoTranslate").addEventListener("change", saveSettings);
   $("fastMode").addEventListener("change", saveSettings);
+  $("slangAdaptation").addEventListener("change", saveSettings);
   $("uiLang").addEventListener("change", async () => {
     applyUiLanguage($("uiLang").value);
     await saveSettings({ liveOnly: true });
@@ -713,7 +739,15 @@ function bindUi() {
   $("fontFamily").addEventListener("change", () => saveSettings({ liveOnly: true }));
   $("swapLangs").addEventListener("click", swapLanguages);
   $("translateVisible").addEventListener("click", translateVisibleImages);
-  $("resetPage").addEventListener("click", () => setStatus(textFor().resetHint));
+  $("resetPage").addEventListener("click", async () => {
+    const tab = await getActiveTab();
+    if (isBackendTab(tab)) {
+      setStatus(backendTabMessage(), true);
+      return;
+    }
+    if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "bta-reset-page" }, () => {});
+    setStatus(textFor().resetHint);
+  });
   $("snipTool").addEventListener("click", () => setStatus(textFor().snipHint));
   $("paintTool").addEventListener("click", () => setStatus(textFor().paintHint));
   $("backupSettings").addEventListener("click", () => setStatus(textFor().backupHint));
@@ -724,6 +758,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (!UI_TEXT[settings.uiLang]) settings.uiLang = defaults.uiLang;
   settings.sourceLang = normalizeLanguageValue(settings.sourceLang) || defaults.sourceLang;
   settings.targetLang = normalizeLanguageValue(settings.targetLang) || defaults.targetLang;
+  if (Object.prototype.hasOwnProperty.call(settings, "adaptation") && !Object.prototype.hasOwnProperty.call(settings, "slangAdaptation")) {
+    settings.slangAdaptation = !["literal", "faithful_global", "off", "false"].includes(String(settings.adaptation || "").toLowerCase());
+  }
+  settings.slangAdaptation = Boolean(settings.slangAdaptation);
   settings.fontSize = normalizeFontScale(settings.fontSize);
   if (settings.balloonOpacity === 90) settings.balloonOpacity = 100;
   if (!Number.isFinite(Number(settings.outlineSize))) settings.outlineSize = defaults.outlineSize;
@@ -733,7 +771,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     uiLang: settings.uiLang,
     fontSize: settings.fontSize,
     outlineSize: settings.outlineSize,
-    balloonOpacity: settings.balloonOpacity
+    balloonOpacity: settings.balloonOpacity,
+    slangAdaptation: settings.slangAdaptation
   });
 
   $("uiLang").value = settings.uiLang;
@@ -741,6 +780,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   fillSelect($("targetLang"), settings.targetLang, settings.uiLang, defaults.targetLang);
   $("autoTranslate").checked = settings.autoTranslate;
   $("fastMode").checked = settings.fastMode;
+  $("slangAdaptation").checked = settings.slangAdaptation;
   $("fontSize").value = settings.fontSize;
   $("fontSizeValue").textContent = `${settings.fontSize}%`;
   $("outlineSize").value = settings.outlineSize;

@@ -18,6 +18,7 @@ BTA MangaTranslate — manga translator with character memory.
 """
 
 import os
+import sys
 import re
 import json
 import time
@@ -32,6 +33,12 @@ import torch
 from PIL import Image, ImageDraw, ImageFont
 from huggingface_hub import hf_hub_download
 from transformers import AutoImageProcessor, AutoModelForObjectDetection, logging as hf_logging
+
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
+from ollama_utils import ensure_ollama_running, normalize_ollama_host, ollama_generate_url, ollama_tags_url
 
 warnings.filterwarnings("ignore")
 
@@ -51,7 +58,9 @@ if USE_CUDA:
     print(f"[gpu] CUDA enabled: {torch.cuda.get_device_name(0)} | fp16={'on' if USE_CUDA_FP16 else 'off'}")
 else:
     print("[gpu] CUDA unavailable; running Python models on CPU")
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_HOST = normalize_ollama_host()
+OLLAMA_URL = ollama_generate_url(OLLAMA_HOST)
+OLLAMA_TAGS_URL = ollama_tags_url(OLLAMA_HOST)
 CROPS_DIR = "crops"
 RESULTS_DIR = "results"
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
@@ -589,6 +598,23 @@ def clean_text(text: str) -> str:
 DEBUG_LLM = os.environ.get("OLLAMA_DEBUG", "").strip() in ("1", "true", "yes", "on")
 # Счётчик вызовов — чтобы в логе было видно номер запроса
 _OLLAMA_CALL_NUM = 0
+_OLLAMA_READY_CHECKED = False
+
+
+def _ensure_ollama_available(force: bool = False) -> None:
+    global _OLLAMA_READY_CHECKED
+
+    if _OLLAMA_READY_CHECKED and not force:
+        return
+
+    ok, message = ensure_ollama_running(OLLAMA_HOST, startup_timeout=20.0)
+    if message:
+        print(f"[ollama] {message}")
+    if not ok:
+        raise requests.exceptions.ConnectionError(
+            f"Ollama is not reachable at {OLLAMA_TAGS_URL}. {message}"
+        )
+    _OLLAMA_READY_CHECKED = True
 
 
 def _log_llm_call(call_num: int, model: str, prompt: str, response: str,
@@ -626,7 +652,8 @@ def _discover_fallback_models() -> list[str]:
     preferred = ["gemma4:26b", "gemma3:27b", "gemma3:12b", "llava:13b",
                  "qwen2.5-vl:7b", "minicpm-v"]
     try:
-        r = requests.get("http://localhost:11434/api/tags", timeout=3)
+        _ensure_ollama_available()
+        r = requests.get(OLLAMA_TAGS_URL, timeout=3)
         installed = {m["name"] for m in r.json().get("models", [])}
     except Exception:
         return []
@@ -650,11 +677,11 @@ def ollama(model_name: str, prompt: str, image_path: str = None,
     промптах после больших). Простой retry с другим seed обычно лечит,
     дальнейшие retries только теряют время.
     """
-    global _OLLAMA_CALL_NUM
+    global _OLLAMA_CALL_NUM, _OLLAMA_READY_CHECKED
     import random
 
     def _call(opts: dict, label: str, model: str) -> str:
-        global _OLLAMA_CALL_NUM
+        global _OLLAMA_CALL_NUM, _OLLAMA_READY_CHECKED
         _OLLAMA_CALL_NUM += 1
         call_num = _OLLAMA_CALL_NUM
         payload = {
@@ -666,7 +693,14 @@ def ollama(model_name: str, prompt: str, image_path: str = None,
             payload["options"] = opts
         if image_path:
             payload["images"] = [image_to_base64(image_path)]
-        r = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
+        _ensure_ollama_available()
+        try:
+            r = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
+        except requests.exceptions.ConnectionError:
+            _OLLAMA_READY_CHECKED = False
+            _ensure_ollama_available(force=True)
+            r = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
+        r.raise_for_status()
         response = r.json().get("response", "").strip()
         if DEBUG_LLM:
             _log_llm_call(call_num, model, prompt, response,

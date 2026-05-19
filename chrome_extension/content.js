@@ -14,26 +14,27 @@ let settings = {
   fontSize: 100,
   outlineSize: 4,
   balloonOpacity: 100,
-  fontFamily: "Anime Ace"
+  fontFamily: "Anime Ace",
+  slangAdaptation: true
 };
 
-const translated = new WeakSet();
-const queued = new WeakSet();
-const translatedSrcByElement = new WeakMap();
-const queuedSrcByElement = new WeakMap();
-const buttonTargets = new WeakSet();
-const targetStates = new WeakMap();
-const failedAt = new WeakMap();
-const overlays = new WeakMap();
+let translated = new WeakSet();
+let queued = new WeakSet();
+let translatedSrcByElement = new WeakMap();
+let queuedSrcByElement = new WeakMap();
+let buttonTargets = new WeakSet();
+let targetStates = new WeakMap();
+let failedAt = new WeakMap();
+let overlays = new WeakMap();
 const bubbleOverlayEntries = new Set();
 const activeTranslations = new Map();
 const pendingTranslationGroups = new Map();
 const translatedResponses = new Map();
-const TRANSLATION_CONCURRENCY = 2;
+const TRANSLATION_CONCURRENCY = 3;
 const TRANSLATION_TIMEOUT_MS = 2 * 60 * 1000;
 const AUTO_FAILURE_RETRY_MS = 12000;
 const AUTO_HEARTBEAT_MS = 800;
-const AUTO_BATCH_LIMIT = 2;
+const AUTO_BATCH_LIMIT = 3;
 const AUTO_RETRY_COOLDOWN_MS = 3500;
 const CANDIDATE_SELECTOR = "img, img[data-src], img[data-original], img[data-lazy-src], img[data-original-src], img[data-srcset], img[data-lazy], img[data-image], img[data-full], img[data-url], img[data-cfsrc], canvas, [style*='background-image']";
 let queueRunning = false;
@@ -45,8 +46,12 @@ let pendingAutoRun = false;
 let autoTranslateSession = false;
 let tabTranslationCancelled = false;
 let autoViewportObserver = null;
-const autoObservedTargets = new WeakSet();
+let autoObservedTargets = new WeakSet();
 const autoAttemptedAtBySrc = new Map();
+let currentPageUrl = location.href;
+let translationSessionId = 1;
+const AUTO_PREFETCH_BEHIND_PX = 1400;
+const AUTO_PREFETCH_AHEAD_PX = 5200;
 
 document.querySelectorAll(".bta-viewport-overlay").forEach((el) => el.remove());
 document.querySelectorAll(".bta-bubble-layer").forEach((el) => el.remove());
@@ -80,9 +85,9 @@ function cancelBackendTranslations() {
   }
 }
 
-function cancelLocalTranslationSession({ cancelBackend = true } = {}) {
+function cancelLocalTranslationSession({ cancelBackend = true, preserveAuto = false } = {}) {
   tabTranslationCancelled = true;
-  autoTranslateSession = false;
+  if (!preserveAuto) autoTranslateSession = false;
   pendingAutoRun = false;
   autoAttemptedAtBySrc.clear();
   window.clearTimeout(autoTimer);
@@ -581,9 +586,13 @@ function originalTextLineMetrics(bubble, displayW, displayH) {
 }
 
 function estimateBubbleFontSize(bubble, displayW, displayH) {
+  const detected = Number(bubble.detected_font_size || 0);
   const metrics = originalTextLineMetrics(bubble, displayW, displayH);
-  const boxCap = Math.max(9, Math.floor(displayH * 1.08));
-  return clamp(Math.round(metrics.originalFontSize), 6, Math.min(110, boxCap));
+  const lineCap = Math.max(6, Math.floor(displayH / Math.max(1, metrics.lineCount) * 0.72));
+  const boxCap = Math.max(8, Math.floor(displayH * 0.48));
+  const detectedCap = detected > 0 ? Math.max(7, Math.round(detected * 1.08)) : 72;
+  const base = detected > 0 ? detected : metrics.originalFontSize;
+  return clamp(Math.round(base), 6, Math.min(54, boxCap, lineCap, detectedCap));
 }
 
 function currentFontScale() {
@@ -596,7 +605,7 @@ function applyFontScaleToFitSize(autoSize) {
 
 function fitBubbleText(copy, maxSize) {
   let low = 5;
-  let high = Math.max(low, Math.round(maxSize));
+  let high = Math.max(low, Math.round(maxSize * currentFontScale()));
   let best = low;
   let checks = 0;
   while (low <= high && checks < 10) {
@@ -612,13 +621,12 @@ function fitBubbleText(copy, maxSize) {
     }
     checks += 1;
   }
-  const scaledBest = applyFontScaleToFitSize(best);
-  copy.style.fontSize = `${scaledBest}px`;
+  copy.style.fontSize = `${best}px`;
   copy.style.transform = "none";
   if (copy.scrollHeight > copy.clientHeight + 1 || copy.scrollWidth > copy.clientWidth + 1) {
     const scaleX = copy.clientWidth / Math.max(1, copy.scrollWidth);
     const scaleY = copy.clientHeight / Math.max(1, copy.scrollHeight);
-    const scale = clamp(Math.min(scaleX, scaleY), 0.55, 1);
+    const scale = clamp(Math.min(scaleX, scaleY), 0.32, 1);
     copy.style.transform = `scale(${scale})`;
   }
 }
@@ -636,9 +644,6 @@ function bubbleTextAlign(bubble = {}) {
   if (klass === "text_free") {
     return ["left", "center", "right"].includes(requested) ? requested : "center";
   }
-  if (shape === "rect" || shape === "square") {
-    return ["left", "center", "right"].includes(requested) ? requested : "center";
-  }
   return "center";
 }
 
@@ -653,10 +658,10 @@ function clampImageBox(x, y, w, h, imageW, imageH) {
 function compactOverlayBoxForBubble(bubble, balloonBox, textBox, maxW, maxH) {
   const klass = String(bubble.class || "");
   if (klass === "text_free") return textBox;
-  const padX = clamp(Math.round(textBox.w * 0.12), 8, 28);
-  const padY = clamp(Math.round(textBox.h * 0.18), 8, 28);
-  const maxAllowedW = Math.min(maxW, Math.max(textBox.w + padX * 2, Math.min(balloonBox.w * 0.64, textBox.w * 1.62)));
-  const maxAllowedH = Math.min(maxH, Math.max(textBox.h + padY * 2, balloonBox.h * 0.72));
+  const padX = clamp(Math.round(textBox.w * 0.10), 4, 18);
+  const padY = clamp(Math.round(textBox.h * 0.12), 3, 16);
+  const maxAllowedW = Math.min(maxW, Math.max(textBox.w + padX * 2, Math.min(balloonBox.w * 0.62, textBox.w * 1.28)));
+  const maxAllowedH = Math.min(maxH, Math.max(textBox.h + padY * 2, Math.min(balloonBox.h * 0.58, textBox.h * 1.32)));
   const w = clamp(textBox.w + padX * 2, Math.min(maxW, textBox.w), maxAllowedW);
   const h = clamp(textBox.h + padY * 2, Math.min(maxH, textBox.h), maxAllowedH);
   return {
@@ -669,8 +674,10 @@ function compactOverlayBoxForBubble(bubble, balloonBox, textBox, maxW, maxH) {
 
 function textContentBoxForBubble(bubble, overlayBox) {
   const klass = String(bubble.class || "");
-  const padX = klass === "text_free" ? 0 : clamp(Math.round(overlayBox.w * 0.06), 4, 16);
-  const padY = klass === "text_free" ? 0 : clamp(Math.round(overlayBox.h * 0.08), 3, 14);
+  const shape = String(bubble.shape || "");
+  const isRect = shape === "rect" || shape === "square";
+  const padX = klass === "text_free" ? 0 : clamp(Math.round(overlayBox.w * (isRect ? 0.05 : 0.08)), 3, 16);
+  const padY = klass === "text_free" ? 0 : clamp(Math.round(overlayBox.h * (isRect ? 0.06 : 0.09)), 2, 14);
   return {
     x: overlayBox.x + padX,
     y: overlayBox.y + padY,
@@ -733,7 +740,7 @@ function positionBubbleEntry(entry) {
     const lines = Math.max(1, text.split(/\r?\n/).filter(Boolean).length);
     const extraPad = outlineSize();
     const lineHeight = bubbleLineHeight(lines);
-    const maxFontSize = estimateBubbleFontSize(bubble, contentBox.w, contentBox.h);
+    const maxFontSize = estimateBubbleFontSize(bubble, textBox.w, textBox.h);
     const finalW = clamp(overlayBox.w, 12, rect.width);
     const finalH = clamp(overlayBox.h, 10, rect.height);
     const finalLeft = clamp(overlayBox.x, 0, Math.max(0, rect.width - finalW));
@@ -758,7 +765,9 @@ function positionBubbleEntry(entry) {
     const copyW = Math.max(10, Math.min(contentBox.w - padX * 2, finalW - copyLeft));
     const copyH = Math.max(10, Math.min(contentBox.h - padY * 2, finalH - copyTop));
     const align = bubbleTextAlign(bubble);
-    const valign = ["top", "middle", "bottom"].includes(bubble.text_valign) ? bubble.text_valign : "middle";
+    const valign = bubble.class === "text_free" && ["top", "middle", "bottom"].includes(bubble.text_valign)
+      ? bubble.text_valign
+      : "middle";
 
     copy.style.left = `${copyLeft}px`;
     copy.style.top = `${copyTop}px`;
@@ -808,21 +817,46 @@ function applyBubbleTranslations(candidate, response, allowEmpty = false) {
   const bubbles = (response.bubbles || []).filter((bubble) => allowEmpty || visibleBubbleTranslation(bubble.translation));
   if (!bubbles.length) return false;
 
-  removeBubbleOverlay(candidate.el);
-  const layer = document.createElement("div");
-  layer.className = "bta-bubble-layer";
+  let entry = findBubbleEntry(candidate.el);
+  if (!entry) {
+    const layer = document.createElement("div");
+    layer.className = "bta-bubble-layer";
+    document.documentElement.append(layer);
+    entry = {
+      target: candidate.el,
+      layer,
+      response: {
+        mode: "bubble_overlay",
+        imageWidth: response.imageWidth || response.image_width || candidate.el.naturalWidth || candidate.rect?.width || 0,
+        imageHeight: response.imageHeight || response.image_height || candidate.el.naturalHeight || candidate.rect?.height || 0,
+        bubbles: []
+      }
+    };
+    bubbleOverlayEntries.add(entry);
+  } else {
+    entry.response.imageWidth = response.imageWidth || response.image_width || entry.response.imageWidth;
+    entry.response.imageHeight = response.imageHeight || response.image_height || entry.response.imageHeight;
+  }
+
   const sparseBubbles = [];
+  const validIndexes = new Set();
 
   bubbles.forEach((bubble, index) => {
     const originalIndex = bubbleOriginalIndex(bubble, index);
+    validIndexes.add(originalIndex);
     sparseBubbles[originalIndex] = bubble;
-    const node = createBubbleNode(bubble, originalIndex);
-    layer.append(node);
+    entry.response.bubbles[originalIndex] = { ...(entry.response.bubbles[originalIndex] || {}), ...bubble };
+    const node = ensureBubbleNode(entry, entry.response.bubbles[originalIndex], originalIndex);
+    setBubbleCopyText(node, entry.response.bubbles[originalIndex]);
+    node.title = bubble.text || "";
+    applyBubbleVisuals(node, { ...entry.response.bubbles[originalIndex], translation: getBubbleCopy(node).textContent });
   });
 
-  document.documentElement.append(layer);
-  const entry = { target: candidate.el, layer, response: { ...response, bubbles: sparseBubbles } };
-  bubbleOverlayEntries.add(entry);
+  entry.layer.querySelectorAll(".bta-bubble-text").forEach((node) => {
+    const index = Number(node.dataset.btaBubbleIndex);
+    if (!validIndexes.has(index)) node.remove();
+  });
+  entry.response.bubbles = sparseBubbles;
   positionBubbleEntry(entry);
   requestAnimationFrame(() => positionBubbleEntry(entry));
   return true;
@@ -884,19 +918,53 @@ function discardBubble(candidate, idx) {
   entry.layer.querySelector(`.bta-bubble-text[data-bta-bubble-index="${index}"]`)?.remove();
 }
 
+function resetPageTranslations({ preserveAuto = false } = {}) {
+  const shouldResumeAuto = preserveAuto && Boolean(settings.autoTranslate);
+  cancelLocalTranslationSession({ preserveAuto });
+  bubbleOverlayEntries.forEach((entry) => {
+    queued.delete(entry.target);
+    translated.delete(entry.target);
+    failedAt.delete(entry.target);
+    targetStates.delete(entry.target);
+    translatedSrcByElement.delete(entry.target);
+    queuedSrcByElement.delete(entry.target);
+    entry.layer.remove();
+  });
+  bubbleOverlayEntries.clear();
+  document.querySelectorAll(".bta-translation-overlay").forEach((overlay) => overlay.remove());
+  document.querySelectorAll(".bta-hover-button").forEach((button) => button.remove());
+  pendingTranslationGroups.clear();
+  activeTranslations.clear();
+  translatedResponses.clear();
+  translated = new WeakSet();
+  queued = new WeakSet();
+  translatedSrcByElement = new WeakMap();
+  queuedSrcByElement = new WeakMap();
+  targetStates = new WeakMap();
+  failedAt = new WeakMap();
+  overlays = new WeakMap();
+  buttonTargets = new WeakSet();
+  if (autoViewportObserver) autoViewportObserver.disconnect();
+  autoViewportObserver = null;
+  autoObservedTargets = new WeakSet();
+  if (shouldResumeAuto) {
+    autoTranslateSession = true;
+    tabTranslationCancelled = false;
+  }
+}
+
 function handleBubbleStreamEvent(src, event) {
+  if (event?.session_id && Number(event.session_id) !== translationSessionId) return;
   const candidates = activeTranslations.get(src);
   if (!candidates?.size || !event) return;
 
   if (event.type === "detected") {
-    candidates.forEach((candidate) => {
-      applyBubbleTranslations(candidate, {
-        mode: "bubble_overlay",
-        imageWidth: event.image_width,
-        imageHeight: event.image_height,
-        bubbles: event.bubbles || []
-      }, true);
-    });
+    candidates.forEach((candidate) => ensureBubbleEntry(candidate, {
+      mode: "bubble_overlay",
+      imageWidth: event.image_width,
+      imageHeight: event.image_height,
+      bubbles: []
+    }));
     return;
   }
 
@@ -933,6 +1001,7 @@ function translateImage(target) {
 
 function translateCandidate(candidate) {
   if (queued.has(candidate.el) || translated.has(candidate.el)) return Promise.resolve(false);
+  const sessionId = translationSessionId;
 
   const cached = translatedResponses.get(candidate.src);
   if (cached) {
@@ -961,7 +1030,7 @@ function translateCandidate(candidate) {
   }
 
   markQueued(candidate);
-  const group = { candidates: new Set([candidate]), resolvers: [] };
+  const group = { candidates: new Set([candidate]), resolvers: [], sessionId };
   pendingTranslationGroups.set(candidate.src, group);
   activeTranslations.set(candidate.src, group.candidates);
   setState(candidate.el, "working");
@@ -991,15 +1060,28 @@ function translateCandidate(candidate) {
     group.resolvers.push({ candidate, resolve });
     chrome.runtime.sendMessage({
       type: "bta-translate-image",
+      sessionId,
       src: candidate.src,
       sourceLang: settings.sourceLang,
       targetLang: settings.targetLang,
       fastMode: settings.fastMode,
       renderMode: "bubbles",
       fontFamily: settings.fontFamily,
-      fontSize: settings.fontSize
+      fontSize: settings.fontSize,
+      slangAdaptation: settings.slangAdaptation
     }, (response) => {
       if (settled) return;
+      if (group.sessionId !== translationSessionId) {
+        pendingTranslationGroups.delete(candidate.src);
+        activeTranslations.delete(candidate.src);
+        group.candidates.forEach((targetCandidate) => {
+          unmarkQueued(targetCandidate.el);
+          setState(targetCandidate.el, "idle");
+        });
+        group.resolvers.forEach(({ resolve }) => resolve(false));
+        finish(false);
+        return;
+      }
       if (chrome.runtime.lastError) {
         pendingTranslationGroups.delete(candidate.src);
         activeTranslations.delete(candidate.src);
@@ -1057,16 +1139,12 @@ function translateCandidate(candidate) {
           if (isAutoTranslateActive()) scheduleAutoTranslate(900);
           return;
         }
-        if (responseHasPendingBubbles(response)) {
-          failedAt.set(targetCandidate.el, Date.now());
-          setState(targetCandidate.el, "error");
-          targetCandidate.el.title = "BTA MangaTranslate: partial translation, will retry automatically.";
-          if (isAutoTranslateActive()) scheduleAutoTranslate(900);
-          return;
-        }
         markTranslated(targetCandidate);
         failedAt.delete(targetCandidate.el);
-        setState(targetCandidate.el, "done");
+        setState(targetCandidate.el, responseHasPendingBubbles(response) ? "partial" : "done");
+        targetCandidate.el.title = responseHasPendingBubbles(response)
+          ? "BTA MangaTranslate: traducao parcial. Os baloes traduzidos foram preservados."
+          : "";
       });
       group.resolvers.forEach(({ candidate: resolverCandidate, resolve }) => {
         resolve(translated.has(resolverCandidate.el));
@@ -1084,6 +1162,14 @@ function autoCandidateRank(candidate) {
   if (bottom < viewportTop) return 2;
   if (candidate.top <= viewportBottom) return 0;
   return 1;
+}
+
+function isInAutoPrefetchWindow(candidate) {
+  const viewportTop = window.scrollY;
+  const viewportBottom = viewportTop + window.innerHeight;
+  const bottom = candidate.top + candidate.rect.height;
+  return bottom >= viewportTop - AUTO_PREFETCH_BEHIND_PX
+    && candidate.top <= viewportBottom + AUTO_PREFETCH_AHEAD_PX;
 }
 
 function collectCandidates({ visibleOnly = false, prioritizeViewport = false, ignoreFailure = false } = {}) {
@@ -1120,7 +1206,7 @@ function collectAutoCandidates() {
     });
   };
   add(collectCandidates({ visibleOnly: true, prioritizeViewport: true, ignoreFailure: true }));
-  add(collectCandidates({ visibleOnly: false, prioritizeViewport: true, ignoreFailure: true }));
+  add(collectCandidates({ visibleOnly: false, prioritizeViewport: true, ignoreFailure: true }).filter(isInAutoPrefetchWindow));
   while (autoAttemptedAtBySrc.size > 300) {
     autoAttemptedAtBySrc.delete(autoAttemptedAtBySrc.keys().next().value);
   }
@@ -1222,6 +1308,7 @@ function createButton(img) {
   buttonTargets.add(img);
 
   const button = document.createElement("button");
+  button.className = "bta-hover-button";
   button.textContent = "BTA Translate";
   button.title = "Translate this image with BTA MangaTranslate";
   Object.assign(button.style, {
@@ -1293,7 +1380,7 @@ function observeAutoTranslateTargets() {
       if (entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) {
         scheduleAutoTranslate(0);
       }
-    }, { root: null, rootMargin: "650px 0px 900px 0px", threshold: 0.01 });
+    }, { root: null, rootMargin: `${AUTO_PREFETCH_BEHIND_PX}px 0px ${AUTO_PREFETCH_AHEAD_PX}px 0px`, threshold: 0.01 });
   }
   document.querySelectorAll(CANDIDATE_SELECTOR).forEach((el) => {
     if (autoObservedTargets.has(el)) return;
@@ -1340,13 +1427,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     translateCurrentVisible().then((result) => sendResponse(result));
     return true;
   }
+  if (message?.type === "bta-reset-page") {
+    resetPageTranslations();
+    sendResponse({ ok: true });
+    return true;
+  }
 });
+
+function handlePageUrlChange() {
+  if (location.href === currentPageUrl) return;
+  currentPageUrl = location.href;
+  translationSessionId += 1;
+  resetPageTranslations({ preserveAuto: true });
+  window.setTimeout(() => {
+    installButtons();
+    if (isAutoTranslateActive()) scheduleAutoTranslate(0);
+  }, 250);
+}
+
+["pushState", "replaceState"].forEach((methodName) => {
+  const original = history[methodName];
+  history[methodName] = function patchedHistoryMethod(...args) {
+    const result = original.apply(this, args);
+    window.setTimeout(handlePageUrlChange, 0);
+    return result;
+  };
+});
+
+window.addEventListener("popstate", handlePageUrlChange);
+window.addEventListener("hashchange", handlePageUrlChange);
+window.addEventListener("pagehide", () => cancelLocalTranslationSession());
+window.setInterval(handlePageUrlChange, 1000);
 
 function isOwnMutation(mutation) {
   const nodes = [...mutation.addedNodes, ...mutation.removedNodes].filter((node) => node.nodeType === Node.ELEMENT_NODE);
   return nodes.length > 0 && nodes.every((node) => (
     node.classList?.contains("bta-bubble-layer")
     || node.classList?.contains("bta-bubble-text")
+    || node.classList?.contains("bta-hover-button")
     || node.classList?.contains("bta-translation-overlay")
     || node.closest?.(".bta-bubble-layer, .bta-translation-overlay")
     || node.textContent === "BTA Translate"
@@ -1446,7 +1564,7 @@ style.textContent = `
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: normal;
-    overflow: visible;
+    overflow: hidden;
     transform-origin: center center;
     line-height: 1.12;
     font-weight: 800;

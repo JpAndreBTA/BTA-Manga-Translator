@@ -9,6 +9,7 @@ web.py
 """
 
 import os
+import sys
 import json
 import shutil
 import asyncio
@@ -23,6 +24,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Optional
 
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse, Response
@@ -30,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 import manga_translator as mt
+from ollama_utils import ensure_ollama_running, normalize_ollama_host, ollama_tags_url
 
 
 # ─── состояние и пути ─────────────────────────────────────────────────────────
@@ -46,15 +52,17 @@ for d in (UPLOADS_DIR, RESULTS_DIR, JOBS_DIR):
 
 # Активные джобы: job_id → {"status", "pages", "stats", "ws_queue"}
 JOBS: dict = {}
-LIVE_TRANSLATION_CACHE: dict[tuple[str, str, str], str] = {}
+LIVE_TRANSLATION_CACHE: dict[tuple[str, ...], str] = {}
 LIVE_OCR_CACHE: dict[tuple[str, int, int, int, int], str] = {}
 LIVE_DETECTION_CACHE: dict[str, list[dict]] = {}
 LIVE_IMAGE_RESULT_CACHE: dict[tuple[str, str, str, str], dict] = {}
-WEB_OCR_CONCURRENCY = max(1, int(os.environ.get("BTA_WEB_OCR_CONCURRENCY", "2") or "2"))
-WEB_TRANSLATION_BATCH_SIZE = max(1, int(os.environ.get("BTA_WEB_TRANSLATION_BATCH", "4") or "4"))
+WEB_OCR_CONCURRENCY = max(1, int(os.environ.get("BTA_WEB_OCR_CONCURRENCY", "5") or "5"))
+WEB_TRANSLATION_BATCH_SIZE = max(1, int(os.environ.get("BTA_WEB_TRANSLATION_BATCH", "5") or "5"))
+WEB_TRANSLATION_CONCURRENCY = max(1, int(os.environ.get("BTA_WEB_TRANSLATION_CONCURRENCY", "2") or "2"))
 WEB_CACHE_LIMIT = max(20, int(os.environ.get("BTA_WEB_CACHE_LIMIT", "240") or "240"))
-WEB_SPLIT_TEXT_GROUPS = os.environ.get("BTA_WEB_SPLIT_TEXT_GROUPS", "0").strip().lower() in ("1", "true", "yes", "on")
-WEB_SPLIT_VISUAL_TEXT = os.environ.get("BTA_WEB_SPLIT_VISUAL_TEXT", "0").strip().lower() in ("1", "true", "yes", "on")
+WEB_SPLIT_TEXT_GROUPS = os.environ.get("BTA_WEB_SPLIT_TEXT_GROUPS", "1").strip().lower() in ("1", "true", "yes", "on")
+WEB_SPLIT_VISUAL_TEXT = os.environ.get("BTA_WEB_SPLIT_VISUAL_TEXT", "1").strip().lower() in ("1", "true", "yes", "on")
+WEB_DETECTION_THRESHOLD = max(0.2, min(0.8, float(os.environ.get("BTA_WEB_DETECTION_THRESHOLD", "0.38") or "0.38")))
 
 
 def _safe_slug(value: str, fallback: str = "untitled") -> str:
@@ -176,6 +184,12 @@ app.mount("/files", StaticFiles(directory=BASE_DIR), name="files")
 @app.on_event("startup")
 async def preload_inpainting_model():
     """Preload anime-big-lama during backend startup so full renders are ready."""
+    ok, message = await asyncio.to_thread(ensure_ollama_running, OLLAMA_HOST, 20.0)
+    if ok:
+        print(f"[startup] Ollama ready at {OLLAMA_HOST}" + (f" ({message})" if message else ""))
+    else:
+        print(f"[startup] Ollama unavailable at {OLLAMA_HOST}: {message}")
+
     print("[startup] Preloading anime-big-lama inpainting model...")
     model = await asyncio.to_thread(mt.get_inpainting_model)
     if model is None:
@@ -202,9 +216,7 @@ async def favicon():
 
 # URL Ollama можно переопределить переменной окружения OLLAMA_HOST
 # (Ollama использует ту же переменную). По умолчанию — localhost:11434.
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-if not OLLAMA_HOST.startswith(("http://", "https://")):
-    OLLAMA_HOST = f"http://{OLLAMA_HOST}"
+OLLAMA_HOST = normalize_ollama_host()
 
 
 def _fetch_ollama_models() -> tuple[list, str | None]:
@@ -213,7 +225,16 @@ def _fetch_ollama_models() -> tuple[list, str | None]:
     Если что-то пошло не так — пишет в консоль развёрнутую диагностику.
     """
     import requests as _req
-    url = f"{OLLAMA_HOST}/api/tags"
+    ok, start_message = ensure_ollama_running(OLLAMA_HOST, startup_timeout=15.0)
+    if start_message:
+        print(f"[/api/models] {start_message}")
+    if not ok:
+        msg = (f"Cannot connect to Ollama at {ollama_tags_url(OLLAMA_HOST)}. "
+               f"{start_message}")
+        print(f"[/api/models] {msg}")
+        return [], msg
+
+    url = ollama_tags_url(OLLAMA_HOST)
     try:
         r = _req.get(url, timeout=5)
     except _req.exceptions.ConnectionError as e:
@@ -336,7 +357,14 @@ async def debug_models():
     Открой http://localhost:8000/api/models/debug в браузере чтобы посмотреть.
     """
     import requests as _req
-    url = f"{OLLAMA_HOST}/api/tags"
+    ok, start_message = ensure_ollama_running(OLLAMA_HOST, startup_timeout=15.0)
+    url = ollama_tags_url(OLLAMA_HOST)
+    if not ok:
+        return {
+            "ollama_host": OLLAMA_HOST,
+            "url_queried": url,
+            "error": start_message,
+        }
     try:
         r = _req.get(url, timeout=5)
         return {
@@ -853,6 +881,7 @@ def _text_layout_from_image(img: Image.Image, bubble: dict, bg: tuple[int, int, 
             "line_count": 1,
             "paragraph_count": 1,
             "text_valign": "middle",
+            "detected_font_size": 0,
         }
 
     crop_h, crop_w = mask.shape
@@ -864,6 +893,7 @@ def _text_layout_from_image(img: Image.Image, bubble: dict, bg: tuple[int, int, 
             "line_count": 1,
             "paragraph_count": 1,
             "text_valign": "middle",
+            "detected_font_size": 0,
         }
 
     centers = [(x0 + x1) / 2 for x0, _, x1, _ in line_boxes]
@@ -896,6 +926,7 @@ def _text_layout_from_image(img: Image.Image, bubble: dict, bg: tuple[int, int, 
         "line_count": max(1, min(8, len(line_boxes))),
         "paragraph_count": max(1, min(4, paragraph_count)),
         "text_valign": valign,
+        "detected_font_size": max(6, min(72, int(median_h * 1.15))),
     }
 
 
@@ -1037,11 +1068,26 @@ def _split_text_groups_by_vertical_gap(group: list[dict], container: dict) -> li
     for item in ordered[1:]:
         x, y, w, h = _box_from_bubble(item)
         prev_x, _, prev_w, _ = _box_from_bubble(clusters[-1][-1])
+        prev_center_x = prev_x + prev_w / 2
+        center_x = x + w / 2
         gap_y = y - (previous_y + previous_h)
         gap_x = x - (prev_x + prev_w)
         vertical_overlap = max(0, min(y + h, previous_y + previous_h) - max(y, previous_y))
-        same_row = vertical_overlap / max(1, min(h, previous_h)) > 0.35
-        if gap_y > split_gap:
+        overlap_ratio = vertical_overlap / max(1, min(h, previous_h))
+        center_shift = abs(center_x - prev_center_x)
+        clearly_new_block = (
+            gap_y > split_gap
+            or (
+                center_shift > max(18, median_h * 0.85)
+                and overlap_ratio < 0.62
+                and gap_y > -median_h * 0.35
+            )
+            or (
+                y - previous_y > max(median_h * 1.45, previous_h * 0.70)
+                and overlap_ratio < 0.75
+            )
+        )
+        if clearly_new_block:
             clusters.append([item])
         else:
             clusters[-1].append(item)
@@ -1064,12 +1110,12 @@ def _overlay_for_text_cluster(
 def _expanded_overlay_box(text_box: dict, image_width: int, image_height: int) -> tuple[int, int, int, int]:
     x, y, w, h = _box_from_bubble(text_box)
     aspect = w / max(1, h)
-    pad_x = max(8, int(w * 0.18), int(h * 0.16))
-    pad_y = max(6, int(h * 0.22), int(w * 0.04))
+    pad_x = max(5, int(w * 0.10), int(h * 0.08))
+    pad_y = max(4, int(h * 0.12), int(w * 0.025))
     if aspect < 0.9:
-        pad_x = max(pad_x, int(h * 0.32))
+        pad_x = max(pad_x, int(h * 0.18))
     elif aspect > 2.4:
-        pad_y = max(pad_y, int(w * 0.08))
+        pad_y = max(pad_y, int(w * 0.04))
     return _clamp_box(x - pad_x, y - pad_y, w + pad_x * 2, h + pad_y * 2, image_width, image_height)
 
 
@@ -1126,11 +1172,19 @@ def _attach_overlay_boxes(detections: list[dict], image_width: int, image_height
 
         for key, group in assignments.items():
             container = assigned_containers[key]
-            for cluster in _split_text_groups_by_vertical_gap(group, container):
+            bx, by, bw, bh = _box_from_bubble(container)
+            clusters = _split_text_groups_by_vertical_gap(group, container)
+            use_parent_balloon = len(clusters) == 1
+            for cluster in clusters:
                 tx, ty, tw, th = _clamp_box(*_union_bubble_boxes(cluster), image_width, image_height)
                 ox, oy, ow, oh = _overlay_for_text_cluster(cluster, container, image_width, image_height)
                 item = dict(container)
                 item["class"] = "text_bubble"
+                if use_parent_balloon:
+                    item["balloon_x"] = bx
+                    item["balloon_y"] = by
+                    item["balloon_w"] = bw
+                    item["balloon_h"] = bh
                 item["x"] = tx
                 item["y"] = ty
                 item["width"] = tw
@@ -1191,6 +1245,11 @@ def _attach_overlay_boxes(detections: list[dict], image_width: int, image_height
                 best_score = score
 
         if best:
+            bx, by, bw, bh = _box_from_bubble(best)
+            item["balloon_x"] = bx
+            item["balloon_y"] = by
+            item["balloon_w"] = bw
+            item["balloon_h"] = bh
             ox, oy, ow, oh = _expanded_overlay_box(item, image_width, image_height)
         else:
             ox, oy, ow, oh = _expanded_overlay_box(item, image_width, image_height)
@@ -1236,6 +1295,10 @@ def _bubble_response_payload(image_path: Path, bubbles: list[dict]) -> dict:
                 "y": y,
                 "w": w,
                 "h": h,
+                "balloon_x": b.get("balloon_x"),
+                "balloon_y": b.get("balloon_y"),
+                "balloon_w": b.get("balloon_w"),
+                "balloon_h": b.get("balloon_h"),
                 "text_x": tx,
                 "text_y": ty,
                 "text_w": tw,
@@ -1305,29 +1368,43 @@ def _split_bubble_by_visual_text(
 
     heights = sorted(y1 - y0 for _, y0, _, y1 in line_boxes)
     median_h = heights[len(heights) // 2]
-    split_gap = max(12, min(median_h * 1.15, th * 0.055))
+    split_gap = max(10, min(median_h * 1.15, th * 0.045))
     clusters: list[list[tuple[int, int, int, int]]] = [[line_boxes[0]]]
     for line in line_boxes[1:]:
         previous = clusters[-1][-1]
-        if line[1] - previous[3] > split_gap:
+        prev_center = (previous[0] + previous[2]) / 2
+        center = (line[0] + line[2]) / 2
+        gap_y = line[1] - previous[3]
+        center_shift = abs(center - prev_center)
+        if gap_y > split_gap or (gap_y > median_h * 0.95 and center_shift > tw * 0.20):
             clusters.append([line])
         else:
             clusters[-1].append(line)
 
-    if len(clusters) <= 1:
-        return [bubble]
+    if len(clusters) == 1 and len(line_boxes) >= 6:
+        gaps = [
+            (line_boxes[i][1] - line_boxes[i - 1][3], i)
+            for i in range(1, len(line_boxes))
+        ]
+        largest_gap, split_at = max(gaps, key=lambda item: item[0])
+        enough_lines_each_side = split_at >= 2 and (len(line_boxes) - split_at) >= 2
+        tall_text_block = th > image_height * 0.12 or th > median_h * 5.0
+        meaningful_gap = largest_gap > max(5, median_h * 0.42)
+        if enough_lines_each_side and tall_text_block and meaningful_gap:
+            clusters = [line_boxes[:split_at], line_boxes[split_at:]]
 
-    split = []
-    for cluster in clusters:
+    def cluster_item(cluster):
         x0 = min(line[0] for line in cluster)
         y0 = min(line[1] for line in cluster)
         x1 = max(line[2] for line in cluster)
         y1 = max(line[3] for line in cluster)
+        pad_x = max(3, min(16, int((x1 - x0) * 0.05)))
+        pad_y = max(2, min(12, int((y1 - y0) * 0.08)))
         text_item = {
-            "x": tx + x0,
-            "y": ty + y0,
-            "width": max(1, x1 - x0),
-            "height": max(1, y1 - y0),
+            "x": tx + max(0, x0 - pad_x),
+            "y": ty + max(0, y0 - pad_y),
+            "width": max(1, min(tw, x1 - x0 + pad_x * 2)),
+            "height": max(1, min(th, y1 - y0 + pad_y * 2)),
         }
         ox, oy, ow, oh = _expanded_overlay_box(text_item, image_width, image_height)
         item = dict(bubble)
@@ -1344,7 +1421,19 @@ def _split_bubble_by_visual_text(
         item["overlay_w"] = ow
         item["overlay_h"] = oh
         item["shape"] = "soft"
-        split.append(item)
+        return item
+
+    if len(clusters) <= 1:
+        refined = cluster_item(line_boxes)
+        original_area = max(1, tw * th)
+        refined_area = max(1, int(refined["width"]) * int(refined["height"]))
+        if refined_area < original_area * 0.82:
+            return [refined]
+        return [bubble]
+
+    split = []
+    for cluster in clusters:
+        split.append(cluster_item(cluster))
 
     return split
 
@@ -1379,7 +1468,7 @@ def _bubble_cache_box(bubble: dict) -> tuple[int, int, int, int]:
 def _detect_text_bubbles(image_path: Path) -> tuple[object, list[dict]]:
     img_cv = _read_cv_image(image_path)
     image_pil = Image.fromarray(mt.cv2.cvtColor(img_cv, mt.cv2.COLOR_BGR2RGB))
-    bubbles = mt.detect_bubbles(image_pil, threshold=0.5)
+    bubbles = mt.detect_bubbles(image_pil, threshold=WEB_DETECTION_THRESHOLD)
     text_bubbles = _attach_overlay_boxes(bubbles, image_pil.size[0], image_pil.size[1])
     split_bubbles = []
     for bubble in text_bubbles:
@@ -1394,7 +1483,7 @@ def _detect_text_bubbles_cached(image_path: Path, image_key: str) -> tuple[objec
         return img_cv, [dict(bubble) for bubble in cached]
 
     image_pil = Image.fromarray(mt.cv2.cvtColor(img_cv, mt.cv2.COLOR_BGR2RGB))
-    bubbles = mt.detect_bubbles(image_pil, threshold=0.5)
+    bubbles = mt.detect_bubbles(image_pil, threshold=WEB_DETECTION_THRESHOLD)
     text_bubbles = _attach_overlay_boxes(bubbles, image_pil.size[0], image_pil.size[1])
     split_bubbles = []
     rgb = image_pil.convert("RGB")
@@ -1480,12 +1569,140 @@ def _ocr_region_preserve_layout(img_cv, bubble: dict, index: int) -> str:
     return final
 
 
-def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_model: str) -> str:
+SLANG_ADAPTATION_GUIDES = {
+    "off": (
+        "Slang adaptation: disabled. Translate faithfully and naturally, but do not add extra slang, memes, or regionalized expressions "
+        "that are not implied by the source."
+    ),
+    "literal": (
+        "Slang adaptation: literal. Keep the meaning close to the source, preserve cultural terms and honorifics when useful, "
+        "and avoid adding modern slang that is not implied by the original."
+    ),
+    "faithful_global": (
+        "Slang adaptation: faithful global localization. Use natural modern wording, but keep the original culture, hierarchy, "
+        "formality, jokes, and character voice. Avoid region-specific slang unless the source clearly has it."
+    ),
+    "natural_br": (
+        "Slang adaptation: natural Brazilian Portuguese. Make dialogue sound fluent for Brazilian manga/manhwa readers, with light, "
+        "natural colloquial phrasing. Do not force memes or excessive slang."
+    ),
+    "br_2026": (
+        "Slang adaptation: Brazil 2026. When the character voice supports it, use contemporary Brazilian youth/internet casual speech. "
+        "Keep it readable nationwide, avoid dated memes, and never change serious/formal characters into jokey ones."
+    ),
+    "us_2026": (
+        "Slang adaptation: United States 2026. When appropriate, use current US casual dialogue and internet-era phrasing. "
+        "Avoid overdoing slang, preserve tone, and keep formal or historical speech formal."
+    ),
+    "jp_2026": (
+        "Slang adaptation: Japan 2026. When appropriate, localize casual speech with modern Japanese youth/media flavor expressed naturally "
+        "in the target language. Keep honorifics/social distance when meaningful and avoid forcing slang."
+    ),
+    "kr_2026": (
+        "Slang adaptation: Korea 2026. When appropriate, write casual dialogue like modern Korean webtoon/K-culture speech. "
+        "Preserve Korean respect levels, age/status nuance, and relationship tone."
+    ),
+    "cn_2026": (
+        "Slang adaptation: China 2026. When appropriate, write casual dialogue like modern Chinese manhua/web culture speech. "
+        "Preserve status, formality, and genre tone."
+    ),
+    "global_auto": (
+        "Slang adaptation: global automatic. Adapt casual dialogue naturally to the target language and region when the source voice supports it. "
+        "Use current, readable phrasing, preserve character voice, and avoid dated memes or excessive slang."
+    ),
+}
+SLANG_ADAPTATION_TARGET_LANGS = {
+    "natural_br": "Portuguese (Brazil)",
+    "br_2026": "Portuguese (Brazil)",
+    "us_2026": "English (United States)",
+    "jp_2026": "Japanese",
+    "kr_2026": "Korean",
+    "cn_2026": "Chinese (Simplified)",
+}
+
+
+def _normalize_slang_adaptation(value: str | None) -> str:
+    key = (value or "auto").strip().lower().replace("-", "_")
+    aliases = {
+        "0": "off",
+        "false": "off",
+        "no": "off",
+        "disabled": "off",
+        "disable": "off",
+        "off": "off",
+        "1": "auto",
+        "true": "auto",
+        "yes": "auto",
+        "enabled": "auto",
+        "enable": "auto",
+        "on": "auto",
+        "faithful": "faithful_global",
+        "faithful_western": "faithful_global",
+        "western": "faithful_global",
+        "fiel ao contexto ocidental": "faithful_global",
+        "natural": "natural_br",
+        "natural brasileiro": "natural_br",
+        "natural brazilian": "natural_br",
+        "brazil": "br_2026",
+        "brasil": "br_2026",
+        "usa": "us_2026",
+        "united_states": "us_2026",
+        "japan": "jp_2026",
+        "korea": "kr_2026",
+        "china": "cn_2026",
+    }
+    key = aliases.get(key, key)
+    if key == "auto":
+        return "auto"
+    return key if key in SLANG_ADAPTATION_GUIDES else "auto"
+
+
+def _auto_slang_adaptation_for_target(target_lang: str) -> str:
+    target = (target_lang or "").strip().lower()
+    if "brazil" in target or "brasil" in target or "portuguese (brazil" in target or target in {"pt-br", "pt_br"}:
+        return "br_2026"
+    if target.startswith("english") or "united states" in target or target in {"en", "en-us", "en_us"}:
+        return "us_2026"
+    if target.startswith("japanese") or target in {"ja", "jp"}:
+        return "jp_2026"
+    if target.startswith("korean") or target in {"ko", "kr"}:
+        return "kr_2026"
+    if target.startswith("chinese") or target in {"zh", "zh-cn", "zh_hans", "zh-hans"}:
+        return "cn_2026"
+    return "global_auto"
+
+
+def _resolve_slang_adaptation(mode: str | None, target_lang: str) -> str:
+    normalized = _normalize_slang_adaptation(mode)
+    if normalized == "auto":
+        return _auto_slang_adaptation_for_target(target_lang)
+    return normalized
+
+
+def _slang_adaptation_instruction(mode: str | None, target_lang: str) -> str:
+    normalized = _resolve_slang_adaptation(mode, target_lang)
+    guide = SLANG_ADAPTATION_GUIDES[normalized]
+    target_locale = _target_lang_for_slang_adaptation(normalized, target_lang)
+    return (
+        f"{guide}\n"
+        f"The final text must be written in {target_locale}. Do not add translator notes. "
+        "Do not insert slang where the source is neutral, ceremonial, old-fashioned, threatening, or serious."
+    )
+
+
+def _target_lang_for_slang_adaptation(mode: str | None, target_lang: str) -> str:
+    normalized = mode if mode in SLANG_ADAPTATION_GUIDES else _resolve_slang_adaptation(mode, target_lang)
+    return SLANG_ADAPTATION_TARGET_LANGS.get(normalized) or target_lang
+
+
+def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_model: str, adaptation_mode: str = "natural_br") -> str:
     cleaned = _clean_visible_text_preserve_lines(text)
     if not cleaned:
         return ""
 
-    cache_key = (source_lang or "Auto", target_lang, cleaned)
+    adaptation_mode = _resolve_slang_adaptation(adaptation_mode, target_lang)
+    effective_target_lang = _target_lang_for_slang_adaptation(adaptation_mode, target_lang)
+    cache_key = (source_lang or "Auto", effective_target_lang, adaptation_mode, cleaned)
     if cache_key in LIVE_TRANSLATION_CACHE:
         cached = LIVE_TRANSLATION_CACHE[cache_key]
         if not _is_bad_live_translation(cached):
@@ -1497,15 +1714,17 @@ def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_mode
         if not source_lang or source_lang.lower() == "auto"
         else f"The source language is {source_lang}."
     )
-    prompts = [f"""Translate this manga/comic speech bubble to {target_lang}.
+    prompts = [f"""Translate this manga/comic speech bubble to {effective_target_lang}.
 {source_hint}
+{_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
 Keep it short and natural for a speech bubble.
 Keep paragraph breaks if they are present. Return only the translated text. No notes, no quotes.
 
 OCR TEXT:
 {cleaned}
-""", f"""You are given OCR text from a manga speech bubble. Translate it to {target_lang}.
+""", f"""You are given OCR text from a manga speech bubble. Translate it to {effective_target_lang}.
 {source_hint}
+{_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
 Do not ask for OCR. Do not explain. Do not mention policies or limitations.
 Return only the translated speech bubble text. Keep paragraph breaks if useful.
 
@@ -1533,7 +1752,7 @@ OCR:
     return result
 
 
-def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, target_lang: str, llm_model: str) -> dict[int, str]:
+def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, target_lang: str, llm_model: str, adaptation_mode: str = "natural_br") -> dict[int, str]:
     cleaned_items = []
     for idx, text in items:
         cleaned = _clean_visible_text_preserve_lines(text)
@@ -1544,8 +1763,10 @@ def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, t
 
     results: dict[int, str] = {}
     pending: list[tuple[int, str]] = []
+    adaptation_mode = _resolve_slang_adaptation(adaptation_mode, target_lang)
+    effective_target_lang = _target_lang_for_slang_adaptation(adaptation_mode, target_lang)
     for idx, text in cleaned_items:
-        cache_key = (source_lang or "Auto", target_lang, text)
+        cache_key = (source_lang or "Auto", effective_target_lang, adaptation_mode, text)
         cached = LIVE_TRANSLATION_CACHE.get(cache_key)
         if cached and not _is_bad_live_translation(cached):
             results[idx] = cached
@@ -1561,8 +1782,9 @@ def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, t
         else f"The source language is {source_lang}."
     )
     payload = [{"idx": idx, "text": text} for idx, text in pending]
-    prompt = f"""Translate these manga/comic speech bubbles to {target_lang}.
+    prompt = f"""Translate these manga/comic speech bubbles to {effective_target_lang}.
 {source_hint}
+{_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
 Keep translations natural for speech bubbles, but do not remove meaning just to make the line shorter.
 Preserve paragraph breaks when present.
 The entries are in manga reading order and may be consecutive parts of the same visible bubble or conversation.
@@ -1597,7 +1819,7 @@ INPUT:
     if missing:
         print(f"     [translate batch fallback] {len(missing)} missing item(s)")
     for idx, text in missing:
-        translation = _translate_live_text(text, source_lang, target_lang, llm_model)
+        translation = _translate_live_text(text, source_lang, target_lang, llm_model, adaptation_mode)
         if translation:
             results[idx] = translation
 
@@ -1606,7 +1828,7 @@ INPUT:
         if translation:
             _cache_put_limited(
                 LIVE_TRANSLATION_CACHE,
-                (source_lang or "Auto", target_lang, text),
+                (source_lang or "Auto", effective_target_lang, adaptation_mode, text),
                 translation,
                 1000,
             )
@@ -1774,6 +1996,8 @@ async def translate_web_image_bubbles(
     llm_model: str = Form(""),
     llm_debug: bool = Form(False),
     fast_mode: bool = Form(True),
+    adaptation_mode: str = Form("auto"),
+    slang_adaptation: bool = Form(True),
 ):
     """
     Browser-extension endpoint for live overlays.
@@ -1838,6 +2062,8 @@ async def translate_web_image_bubbles_stream(
     llm_model: str = Form(""),
     llm_debug: bool = Form(False),
     fast_mode: bool = Form(True),
+    adaptation_mode: str = Form("auto"),
+    slang_adaptation: bool = Form(True),
 ):
     """
     Streaming browser-extension endpoint.
@@ -1859,7 +2085,11 @@ async def translate_web_image_bubbles_stream(
         tasks: list[asyncio.Task] = []
         try:
             mt.DEBUG_LLM = bool(llm_debug)
-            result_cache_key = (image_key, source_lang or "Auto", target_lang, llm_model.strip() or mt.LLM_MODEL)
+            requested_adaptation = "auto" if slang_adaptation else "off"
+            if adaptation_mode and adaptation_mode != "auto":
+                requested_adaptation = adaptation_mode
+            adaptation_mode_normalized = _resolve_slang_adaptation(requested_adaptation, target_lang)
+            result_cache_key = (image_key, source_lang or "Auto", target_lang, adaptation_mode_normalized, llm_model.strip() or mt.LLM_MODEL)
             cached_result = LIVE_IMAGE_RESULT_CACHE.get(result_cache_key)
             if cached_result:
                 yield _ndjson({
@@ -1902,19 +2132,25 @@ async def translate_web_image_bubbles_stream(
             translated_payloads: list[dict] = []
             pending_translate: list[tuple[int, dict]] = []
             ocr_sem = asyncio.Semaphore(WEB_OCR_CONCURRENCY)
+            translate_sem = asyncio.Semaphore(WEB_TRANSLATION_CONCURRENCY)
+            translation_tasks: list[asyncio.Task] = []
 
             async def run_ocr(index: int, bubble: dict):
                 cache_key = (image_key, *_bubble_cache_box(bubble))
                 cached_text = LIVE_OCR_CACHE.get(cache_key)
                 if cached_text is not None:
                     return index, bubble, cached_text
-                async with ocr_sem:
-                    text_value = await asyncio.to_thread(
-                        _ocr_region_preserve_layout,
-                        img_cv,
-                        bubble,
-                        index,
-                    )
+                try:
+                    async with ocr_sem:
+                        text_value = await asyncio.to_thread(
+                            _ocr_region_preserve_layout,
+                            img_cv,
+                            bubble,
+                            index,
+                        )
+                except Exception as exc:
+                    print(f"     [OCR web error] bubble {index}: {type(exc).__name__}: {exc}")
+                    text_value = ""
                 _cache_put_limited(LIVE_OCR_CACHE, cache_key, text_value)
                 return index, bubble, text_value
 
@@ -1922,13 +2158,18 @@ async def translate_web_image_bubbles_stream(
                 nonlocal translated_count
                 if not batch:
                     return []
-                translations = await asyncio.to_thread(
-                    _translate_live_text_batch,
-                    [(idx, bubble.get("text", "")) for idx, bubble in batch],
-                    source_lang,
-                    target_lang,
-                    llm_model,
-                )
+                try:
+                    translations = await asyncio.to_thread(
+                        _translate_live_text_batch,
+                        [(idx, bubble.get("text", "")) for idx, bubble in batch],
+                        source_lang,
+                        target_lang,
+                        llm_model,
+                        adaptation_mode_normalized,
+                    )
+                except Exception as exc:
+                    print(f"     [translate web error] batch: {type(exc).__name__}: {exc}")
+                    translations = {}
                 events = []
                 for idx, bubble in batch:
                     translation = translations.get(idx, "")
@@ -1946,6 +2187,21 @@ async def translate_web_image_bubbles_stream(
                         "bubble": payload,
                     }))
                 return events
+
+            async def run_translation_batch(batch: list[tuple[int, dict]]):
+                async with translate_sem:
+                    return await flush_translation_batch(batch)
+
+            def queue_translation_batch(batch: list[tuple[int, dict]]):
+                if batch:
+                    translation_tasks.append(asyncio.create_task(run_translation_batch(batch)))
+
+            async def yield_ready_translation_events():
+                ready = [task for task in translation_tasks if task.done()]
+                for task in ready:
+                    translation_tasks.remove(task)
+                    for event in await task:
+                        yield event
 
             tasks = [
                 asyncio.create_task(run_ocr(index, bubble))
@@ -1979,12 +2235,18 @@ async def translate_web_image_bubbles_stream(
                             break
                         batch = sorted(pending_translate, key=lambda item: item[0])
                         pending_translate = []
-                        for event in await flush_translation_batch(batch):
-                            yield event
+                        queue_translation_batch(batch)
+                async for event in yield_ready_translation_events():
+                    yield event
 
             if pending_translate and not await request.is_disconnected():
                 batch = sorted(pending_translate, key=lambda item: item[0])
-                for event in await flush_translation_batch(batch):
+                queue_translation_batch(batch)
+
+            for task in asyncio.as_completed(translation_tasks):
+                if await request.is_disconnected():
+                    break
+                for event in await task:
                     yield event
 
             if translated_payloads:
@@ -2008,6 +2270,13 @@ async def translate_web_image_bubbles_stream(
             for task in tasks:
                 if not task.done():
                     task.cancel()
+            for task in translation_tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            if translation_tasks:
+                await asyncio.gather(*translation_tasks, return_exceptions=True)
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
 
@@ -2018,6 +2287,8 @@ async def translate_web_image_fast(
     source_lang: str = Form("Auto"),
     target_lang: str = Form("Portuguese (Brazil)"),
     llm_model: str = Form(""),
+    adaptation_mode: str = Form("auto"),
+    slang_adaptation: bool = Form(True),
 ):
     """
     Fast browser-extension path: OCR the whole visible image and return text.
@@ -2044,6 +2315,11 @@ async def translate_web_image_fast(
         shutil.copyfileobj(file.file, out)
 
     def run_fast_translation():
+        requested_adaptation = "auto" if slang_adaptation else "off"
+        if adaptation_mode and adaptation_mode != "auto":
+            requested_adaptation = adaptation_mode
+        effective_target_lang = _target_lang_for_slang_adaptation(requested_adaptation, target_lang)
+        adaptation_instruction = _slang_adaptation_instruction(requested_adaptation, effective_target_lang)
         ocr_prompt = (
             "Extract only visible manga/comic dialogue and narration from this image. "
             "Ignore website UI, ads, prices, metadata, JSON, markdown, and hidden text. "
@@ -2069,8 +2345,9 @@ async def translate_web_image_fast(
             mt.LLM_MODEL = llm_model.strip()
 
         if not source_text or looks_like_bad_ocr(source_text):
-            direct_prompt = f"""Look at this manga/comic screenshot and translate only the visible dialogue and narration to {target_lang}.
+            direct_prompt = f"""Look at this manga/comic screenshot and translate only the visible dialogue and narration to {effective_target_lang}.
 {source_hint}
+{adaptation_instruction}
 Ignore website UI, ads, prices, metadata, JSON, markdown, and hidden text.
 Return only the translated manga/comic text. Preserve line breaks when useful."""
             try:
@@ -2095,8 +2372,9 @@ Return only the translated manga/comic text. Preserve line breaks when useful.""
             if not source_lang or source_lang.lower() == "auto"
             else f"The source language is {source_lang}."
         )
-        translate_prompt = f"""Translate this manga/comic text to {target_lang}.
+        translate_prompt = f"""Translate this manga/comic text to {effective_target_lang}.
 {source_hint}
+{adaptation_instruction}
 Keep the same line breaks when possible. Make it natural, concise, and suitable for speech bubbles.
 Return only the translated text.
 

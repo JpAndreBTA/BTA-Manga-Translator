@@ -1,5 +1,17 @@
 const SERVER = "http://localhost:8000";
+const BUBBLE_PROGRESS_FLUSH_SIZE = 5;
 const tabControllers = new Map();
+const BTA_BACKEND_HOSTNAMES = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
+const BTA_BACKEND_PORTS = new Set(["", "8000", "8001", "8002", "8003", "8004", "8005", "8006", "8007", "8008", "8009", "8010", "8011", "8012", "8013", "8014", "8015", "8016", "8017", "8018", "8019", "8020"]);
+
+function isBackendUrl(url = "") {
+  try {
+    const parsed = new URL(url);
+    return BTA_BACKEND_HOSTNAMES.has(parsed.hostname) && BTA_BACKEND_PORTS.has(parsed.port);
+  } catch {
+    return false;
+  }
+}
 
 async function blobToDataUrl(blob) {
   const buffer = await blob.arrayBuffer();
@@ -118,6 +130,22 @@ async function translateBubblesStream(payload, form, sender) {
     bubbles: [],
     jobId: ""
   };
+  let bubblesSinceProgress = 0;
+
+  function sendBubbleSyncProgress() {
+    sendProgress(sender, {
+      type: "bta-bubble-stream",
+      src: payload.src,
+      event: {
+        type: "sync",
+        session_id: payload.sessionId,
+        image_width: final.imageWidth,
+        image_height: final.imageHeight,
+        bubbles: final.bubbles.filter(Boolean)
+      }
+    });
+    bubblesSinceProgress = 0;
+  }
 
   async function applyStreamEvent(event) {
     await assertSenderTabExists(sender, controller);
@@ -129,6 +157,10 @@ async function translateBubblesStream(payload, form, sender) {
     } else if (event.type === "bubble" && event.bubble) {
       const idx = Number(event.bubble.idx) - 1;
       if (idx >= 0) final.bubbles[idx] = { ...(final.bubbles[idx] || {}), ...event.bubble };
+      bubblesSinceProgress += 1;
+      if (bubblesSinceProgress >= BUBBLE_PROGRESS_FLUSH_SIZE) {
+        sendBubbleSyncProgress();
+      }
     } else if (event.type === "discard") {
       const idx = Number(event.idx) - 1;
       if (idx >= 0) delete final.bubbles[idx];
@@ -136,11 +168,6 @@ async function translateBubblesStream(payload, form, sender) {
       throw new Error(event.error || "BTA MangaTranslate stream failed");
     }
 
-    sendProgress(sender, {
-      type: "bta-bubble-stream",
-      src: payload.src,
-      event
-    });
   }
 
   while (true) {
@@ -160,16 +187,7 @@ async function translateBubblesStream(payload, form, sender) {
   if (tail) await applyStreamEvent(JSON.parse(tail));
 
   await assertSenderTabExists(sender, controller);
-  sendProgress(sender, {
-    type: "bta-bubble-stream",
-    src: payload.src,
-    event: {
-      type: "sync",
-      image_width: final.imageWidth,
-      image_height: final.imageHeight,
-      bubbles: final.bubbles.filter(Boolean)
-    }
-  });
+  sendBubbleSyncProgress();
 
   return final;
   } finally {
@@ -179,6 +197,10 @@ async function translateBubblesStream(payload, form, sender) {
 }
 
 async function translateImage(payload, sender) {
+  if (isBackendUrl(sender?.tab?.url)) {
+    throw new Error("Abra a pagina do manga/manhwa e use a extensao nessa aba. O backend nao deve ser traduzido.");
+  }
+
   await assertSenderTabExists(sender);
   const imageResponse = await fetch(payload.src, {
     credentials: "include",
@@ -193,6 +215,7 @@ async function translateImage(payload, sender) {
   form.append("file", imageBlob, filenameFromUrl(payload.src));
   form.append("source_lang", payload.sourceLang || "Auto");
   form.append("target_lang", payload.targetLang || "Portuguese (Brazil)");
+  form.append("slang_adaptation", String(payload.slangAdaptation ?? true));
   form.append("fast_mode", String(payload.fastMode ?? true));
   form.append("font_path", payload.fontPath || fontPathFromFamily(payload.fontFamily));
   if (payload.fontSize) form.append("font_size", String(payload.fontSize));
@@ -245,6 +268,12 @@ async function translateImage(payload, sender) {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   abortTabControllers(tabId, "Traducao cancelada: a aba foi fechada.");
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url) {
+    abortTabControllers(tabId, "Traducao cancelada: a URL mudou.");
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
