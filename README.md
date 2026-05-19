@@ -5,111 +5,66 @@
 [![Backend](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
 [![Local LLM](https://img.shields.io/badge/LLM-Ollama-black.svg)](https://ollama.com/)
 
-**BTA MangaTranslate** is a local manga and comic translation workstation. It detects speech bubbles, reads OCR text, translates dialogue with local Ollama models, removes original lettering with inpainting, renders translated text back into the image, and lets you edit or export the result from a modern backend UI.
+**BTA MangaTranslate** is a local manga translation tool with two workflows:
 
-It also includes a Chrome extension that can translate manga images directly on reading websites using the same local backend.
+- **Chrome extension:** translates manga pages while you read, using live text overlays.
+- **Backend web app:** uploads chapters, removes original text with inpaint, renders translated text inside bubbles, lets you edit, and exports ZIP/CBZ.
 
-> Runs locally. No cloud API keys are required.
+Everything runs locally through your own backend and Ollama. No cloud API key is required.
 
-## Contents
+## Start Here
 
-- [Highlights](#highlights)
-- [How It Works](#how-it-works)
-- [Requirements](#requirements)
-- [Quick Start](#quick-start)
-- [Backend Web UI](#backend-web-ui)
-- [Chrome Extension](#chrome-extension)
-- [Languages](#languages)
-- [Configuration](#configuration)
-- [Environment Flags](#environment-flags)
-- [API Overview](#api-overview)
-- [Project Structure](#project-structure)
-- [Troubleshooting](#troubleshooting)
-- [Credits](#credits)
-- [License](#license)
+### 1. Chrome Extension: translate while reading
 
-## Highlights
+Use this when you are reading manga online and want quick live translation overlays.
 
-| Feature | Status |
-|---|---:|
-| Multiple image upload for full chapters | Yes |
-| Bubble detection with RT-DETRv2 | Yes |
-| OCR through local Ollama models | Yes |
-| Source and target language selection | Yes |
-| Batch translation with page context | Yes |
-| Character archive across pages | Yes |
-| Intelligent inpaint rendering | Yes |
-| Per-bubble text sizing and layout metadata | Yes |
-| Visual editor with re-render | Yes |
-| ZIP and CBZ chapter export | Yes |
-| Chrome extension live overlay translation | Yes |
-| Auto-translate toggle with cancellation | Yes |
-| Tab close cancellation for extension jobs | Yes |
-| Local-first privacy model | Yes |
+![Chrome extension translating a manga reader page](examples/ExtensionForReadingOnline.png)
 
-<details>
-<summary><strong>What makes it different?</strong></summary>
+How it works:
 
-Most manga translators process each bubble in isolation. BTA MangaTranslate keeps chapter-level context:
+1. Start the backend with `run.bat`, `run.sh`, or `python setup.py`.
+2. Open Chrome at `chrome://extensions`.
+3. Enable **Developer mode**.
+4. Click **Load unpacked** and select `chrome_extension/`.
+5. Open a manga chapter page.
+6. Use the BTA popup to translate the current page or enable auto-translation.
 
-- A **character archive** remembers recurring characters, names, genders, and descriptions.
-- A **page context** helps the LLM translate short lines with the surrounding scene in mind.
-- OCR, translation, inpaint, and rendering metadata are preserved so the editor can re-render individual pages.
-- The Chrome extension uses streamed backend responses so visible text can appear progressively.
+The extension sends visible page images to your local backend, receives OCR and translation results, then draws translated text as browser overlays. It does **not** permanently edit the source images.
 
-</details>
+### 2. Backend: translate full chapters with inpaint
 
-## How It Works
+Use this when you want rendered translated images, editing, and export.
 
-```text
-Image or chapter pages
-  |
-  |-- Bubble and text-region detection
-  |-- OCR per visible text region
-  |-- Optional page and character analysis
-  |-- Batch translation with source/target language controls
-  |-- Original text removal with anime-big-lama inpaint
-  |-- Translated text rendering with adaptive font sizing
-  |-- Web editor, image download, ZIP export, or CBZ export
-```
+![Backend chapter translation](examples/BackendTranslateImages.png)
 
-<details>
-<summary><strong>Pipeline details</strong></summary>
+Basic flow:
 
-- **Detection:** RT-DETRv2-based comic bubble detection from Hugging Face weights.
-- **OCR:** Local OCR prompts sent to Ollama, with crop preprocessing for manga text.
-- **Translation:** Local LLM prompts with source language, target language, speaker hints, page context, and nearby lines.
-- **Inpaint:** anime-big-lama removes the original text before rendering.
-- **Rendering:** PIL draws translated text using adaptive wrapping, contrast-aware colors, bubble shape hints, and font fitting.
-- **Editor:** Saved job data can be reopened, edited, and re-rendered without re-uploading the chapter.
+1. Open `http://localhost:8000/`.
+2. Drop chapter images or click **Add chapter URL**.
+3. Choose source language, target language, model, and font.
+4. Click **Start batch translation**.
+5. Edit any bubble if needed.
+6. Export the result as ZIP or CBZ.
 
-</details>
+The backend removes the original text with inpaint and renders translated text inside the detected bubbles.
 
-## Requirements
+### 3. Editor: fix bubbles before export
 
-- Windows 10/11, Linux, or macOS.
-- Python 3.10 or newer. The included launch scripts can install a portable Python automatically.
-- [Ollama](https://ollama.com/) running locally at `http://localhost:11434`.
-- At least one vision-capable Ollama model.
-- Recommended OCR model: `glm-ocr`.
-- GPU recommended for fast inpaint and detection. CPU works, but is slower.
+![Visual editor](examples/Editor.jpg)
 
-Recommended Ollama models:
+The editor lets you:
 
-```bash
-ollama pull gemma3:4b
-ollama pull glm-ocr
-```
+- change translated text per bubble;
+- change font per bubble or for the page;
+- re-render the current page;
+- inspect OCR text and bubble metadata;
+- export the corrected chapter.
 
-Stronger but heavier options:
+## Example Output
 
-```bash
-ollama pull gemma3:12b
-ollama pull llava:13b
-ollama pull qwen2.5vl:7b
-```
+![Translated manga example](examples/ExampleTranslate.png)
 
-## Quick Start
+## Install
 
 ### Windows
 
@@ -117,11 +72,7 @@ ollama pull qwen2.5vl:7b
 run.bat
 ```
 
-The launcher prepares the local Python environment, installs dependencies, checks Ollama, and opens:
-
-```text
-http://localhost:8000/
-```
+The launcher prepares the local Python environment, installs dependencies, checks Ollama, and opens the backend.
 
 ### Linux and macOS
 
@@ -130,7 +81,7 @@ chmod +x run.sh
 ./run.sh
 ```
 
-### Manual Python install
+### Manual
 
 ```bash
 python -m venv venv
@@ -148,169 +99,51 @@ pip install -r requirements.txt
 python setup.py
 ```
 
-<details>
-<summary><strong>CUDA vs CPU dependencies</strong></summary>
+## Requirements
 
-`requirements.txt` installs the default PyTorch package first. On startup,
-`setup.py` checks the device:
+- Windows 10/11, Linux, or macOS.
+- Python 3.10 or newer.
+- [Ollama](https://ollama.com/) running locally.
+- At least one vision-capable Ollama model.
+- Recommended OCR model: `glm-ocr`.
+- GPU recommended for detection and inpaint. CPU works, but is slower.
 
-- NVIDIA GPU detected through `nvidia-smi`: the launcher installs/reloads the
-  CUDA 12.4 PyTorch wheels automatically.
-- No NVIDIA GPU detected: the project keeps the default CPU-compatible PyTorch
-  install and runs Python models on CPU.
-
-Advanced overrides:
+Recommended models:
 
 ```bash
-BTA_FORCE_CPU=1      # force CPU even when CUDA is available
-BTA_CUDA_FP16=0      # keep CUDA but disable fp16 acceleration
+ollama pull gemma3:4b
+ollama pull glm-ocr
 ```
 
-</details>
+Heavier alternatives:
 
-## Backend Web UI
-
-Open the backend at:
-
-```text
-http://localhost:8000/
+```bash
+ollama pull gemma3:12b
+ollama pull llava:13b
+ollama pull qwen2.5vl:7b
 ```
 
-The backend UI includes:
+## What Each Mode Is For
 
-- **Translate:** Upload one or many manga pages, select source and target language, choose model, font, debug options, and fast mode.
-- **Editor Visual:** Reopen translated pages, edit bubble text, adjust font options, and re-render.
-- **Characters:** View, edit, save, or clear the chapter character archive.
-- **Export:** Download translated pages as individual images, ZIP, or CBZ.
-- **Modern BTA layout:** Dark sidebar, drag-and-drop upload zone, inpaint status, BTA Studio link, and donation button.
-
-<details>
-<summary><strong>Batch translation flow</strong></summary>
-
-1. Drag chapter pages into the upload area.
-2. Pick **Source language** or leave it on **Auto detect**.
-3. Pick **Translation language**.
-4. Select the Vision/LLM model from Ollama.
-5. Enable or disable debug boxes, verbose LLM logs, and fast mode.
-6. Wait for live WebSocket progress.
-7. Edit pages if needed.
-8. Export ZIP or CBZ.
-
-</details>
-
-## Chrome Extension
-
-The `chrome_extension/` folder contains a local Chrome extension that talks to the backend.
-
-### Load it locally
-
-1. Start the backend with `run.bat`, `run.sh`, or `python setup.py`.
-2. Open `chrome://extensions`.
-3. Enable **Developer mode**.
-4. Click **Load unpacked**.
-5. Select the `chrome_extension` folder.
-6. Open a manga reader page and use the BTA MangaTranslate popup.
-
-### Extension features
-
-- Translate visible images on the current page.
-- Translate a single hovered manga image.
-- Auto-translate newly loaded chapter images.
-- Stop and resume auto-translation from the toggle.
-- Cancel backend work when the tab is closed.
-- Keep auto-translation alive when navigating chapters inside the same tab.
-- Render translated text as overlays using bubble-aware shape, width, and font sizing.
-- Link to GitHub, BTA Studio, and donation support from the popup.
-
-## Languages
-
-The backend supports a broad selectable language list for both **Source language** and **Translation language**.
-
-Source language can be set to **Auto detect**. Target language must be explicit.
-
-Included options cover common manga translation targets such as:
-
-```text
-English, Portuguese, Portuguese (Brazil), Spanish, French, German,
-Japanese, Korean, Chinese, Chinese (Simplified), Chinese (Traditional),
-Russian, Italian, Arabic, Hindi, Indonesian, Thai, Vietnamese,
-Polish, Turkish, Ukrainian, Swedish, Dutch, and many more.
-```
-
-The actual quality depends on the selected Ollama model.
-
-## Configuration
-
-Browser UI settings are stored in `localStorage`.
-
-Generated backend data is stored locally:
-
-| Path | Purpose |
-|---|---|
-| `web_data/` | Uploaded pages, translated outputs, job metadata |
-| `characters.json` | Main character archive |
-| `models/huggingface/` | Project-local Hugging Face cache configured by `setup.py` |
-| `errors.log` | Translation and processing issues |
-
-Optional Hugging Face token locations:
-
-```text
-HF_TOKEN environment variable
-HUGGINGFACE_HUB_TOKEN environment variable
-.env
-.env.local
-huggingface_token.txt
-```
-
-## Environment Flags
-
-You can tune backend behavior with environment variables:
-
-| Variable | Default | Purpose |
-|---|---:|---|
-| `BTA_PORT` | `8000` | Backend port used by the launcher |
-| `BTA_WEB_OCR_CONCURRENCY` | `2` | Number of parallel OCR jobs for streamed extension translation |
-| `BTA_WEB_TRANSLATION_BATCH` | `4` | Number of OCR items grouped per translation batch |
-| `BTA_WEB_CACHE_LIMIT` | `240` | In-memory cache limit for detection and translation data |
-| `BTA_WEB_SPLIT_TEXT_GROUPS` | `1` | Split large detected text groups by visual gaps |
-| `BTA_WEB_SPLIT_VISUAL_TEXT` | `0` | Force visual splitting for speech-bubble text |
-
-Example on PowerShell:
-
-```powershell
-$env:BTA_WEB_OCR_CONCURRENCY="3"
-python setup.py
-```
-
-## API Overview
-
-The backend is a FastAPI application. Main routes:
-
-| Route | Method | Purpose |
+| Workflow | Best for | Output |
 |---|---|---|
-| `/` | GET | Backend web UI |
-| `/api/models` | GET | List usable Ollama models |
-| `/api/upload` | POST | Create a chapter translation job |
-| `/ws/{job_id}` | WebSocket | Live job progress |
-| `/api/job/{job_id}` | GET | Load job metadata and pages |
-| `/api/job/{job_id}/page/{page_idx}/render` | POST | Re-render one edited page |
-| `/api/job/{job_id}/export?fmt=zip` | GET | Export translated chapter as ZIP |
-| `/api/job/{job_id}/export?fmt=cbz` | GET | Export translated chapter as CBZ |
-| `/api/characters` | GET/PUT/DELETE | Read, save, or clear character archive |
-| `/api/translate-image-bubbles-stream` | POST | Stream OCR and overlay translations for the extension |
-| `/api/translate-image-fast` | POST | Fast visible-image translation path |
+| Chrome extension | Reading online | Live browser overlays |
+| Backend Translate | Full chapter processing | Rendered images with inpaint |
+| Backend Editor | Manual cleanup | Re-rendered corrected pages |
+| Export | Sharing your own processed files | ZIP or CBZ |
 
-<details>
-<summary><strong>Extension endpoints</strong></summary>
+## Key Features
 
-The extension primarily uses:
-
-- `/api/translate-image-bubbles-stream` for progressive OCR and translated bubble overlays.
-- `/api/translate-image-bubbles` for one-shot bubble payloads.
-- `/api/translate-image-fast` for a faster whole-image fallback path.
-- `/api/models` to populate model choices.
-
-</details>
+- Local OCR and translation through Ollama.
+- Speech bubble detection with RT-DETRv2.
+- Backend inpaint rendering for clean translated pages.
+- Chrome extension overlay mode for online reading.
+- Batch chapter translation.
+- Chapter URL import.
+- Visual editor with per-bubble text and font controls.
+- ZIP and CBZ export.
+- Character archive for better chapter context.
+- Default Comic Bold font alias with automatic fallback.
 
 ## Project Structure
 
@@ -321,23 +154,92 @@ MangaTranslate/
   manga_translator.py          OCR, translation, inpaint, rendering pipeline
   setup.py                     Local launcher and environment checks
   requirements.txt             Python dependencies
-  run.bat                      Windows portable launcher
+  run.bat                      Windows launcher
   run.sh                       Linux/macOS launcher
   chrome_extension/            Chrome extension
+  examples/                    README images and workflow examples
 ```
+
+## Useful Details
+
+<details>
+<summary><strong>How the backend pipeline works</strong></summary>
+
+```text
+Chapter image
+  |
+  |-- detect bubbles and text regions
+  |-- OCR each bubble
+  |-- translate with local Ollama model
+  |-- inpaint original lettering
+  |-- fit translated text inside bubbles
+  |-- save image, editor data, and export files
+```
+
+</details>
+
+<details>
+<summary><strong>How the extension pipeline works</strong></summary>
+
+```text
+Visible browser image
+  |
+  |-- send image to localhost backend
+  |-- detect/OCR/translate bubbles
+  |-- stream results back to Chrome
+  |-- draw translated text overlays on the page
+```
+
+The extension is intentionally different from the backend. It is built for fast reading overlays, while the backend is built for final rendered output.
+
+</details>
+
+<details>
+<summary><strong>Local data folders</strong></summary>
+
+Generated data stays local:
+
+| Path | Purpose |
+|---|---|
+| `web_data/` | Uploads, translated pages, jobs, exports |
+| `characters.json` | Character archive |
+| `models/huggingface/` | Local Hugging Face cache |
+| `crops/` | OCR/debug crops |
+| `errors.log` | Processing issues |
+
+These paths are ignored by Git.
+
+</details>
+
+<details>
+<summary><strong>Main API routes</strong></summary>
+
+| Route | Purpose |
+|---|---|
+| `/` | Backend web UI |
+| `/api/models` | List Ollama models |
+| `/api/upload` | Create a chapter job |
+| `/ws/{job_id}` | Live backend progress |
+| `/api/job/{job_id}` | Load job data |
+| `/api/job/{job_id}/page/{page_idx}/render` | Re-render edited page |
+| `/api/job/{job_id}/export?fmt=zip` | Export ZIP |
+| `/api/job/{job_id}/export?fmt=cbz` | Export CBZ |
+| `/api/translate-image-bubbles-stream` | Extension streaming overlay endpoint |
+
+</details>
 
 ## Troubleshooting
 
 <details>
 <summary><strong>Ollama is not detected</strong></summary>
 
-Make sure Ollama is installed and running:
+Check Ollama:
 
 ```bash
 ollama list
 ```
 
-Then pull at least one vision model and the OCR model:
+Then pull the recommended models:
 
 ```bash
 ollama pull gemma3:4b
@@ -347,39 +249,28 @@ ollama pull glm-ocr
 </details>
 
 <details>
-<summary><strong>Translations are empty or strange</strong></summary>
+<summary><strong>The extension does not translate a page</strong></summary>
 
-Try another model. Some modified or abliterated model builds have broken vision or chat templates. Regular `gemma3` and common vision models are usually more reliable.
+Check that:
 
-Enable **Verbose LLM logging** in the backend UI to inspect prompts and responses in the server console.
+- the backend is running at `http://localhost:8000/`;
+- the extension was loaded from `chrome_extension/`;
+- the reader page uses normal image elements;
+- the site is not blocking overlays or image access.
+
+</details>
+
+<details>
+<summary><strong>Text does not fit perfectly</strong></summary>
+
+Use the backend editor, adjust the bubble text or font, then click **Save and re-render**. Very dense text, vertical lettering, credits pages, or unusual balloon shapes may still need manual cleanup.
 
 </details>
 
 <details>
 <summary><strong>Inpaint is slow</strong></summary>
 
-Use a GPU-enabled PyTorch install when possible. The launcher detects NVIDIA GPUs and upgrades PyTorch to the CUDA wheel automatically; machines without CUDA stay on CPU.
-
-Fast mode can reduce LLM calls, but inpaint still depends on your hardware.
-
-</details>
-
-<details>
-<summary><strong>The extension does not translate the page</strong></summary>
-
-Check that:
-
-- The backend is running at `http://localhost:8000/`.
-- The extension has been loaded from the local `chrome_extension/` folder.
-- The current page contains normal image elements, not a protected canvas-only reader.
-- Browser console errors are not blocked by the site Content Security Policy.
-
-</details>
-
-<details>
-<summary><strong>Text size or line wrapping looks wrong</strong></summary>
-
-Use the visual editor to adjust individual bubbles and re-render. The renderer uses OCR-derived layout hints, but very stylized lettering, vertical text, or dense credits pages can still need manual cleanup.
+Use an NVIDIA GPU when possible. The launcher checks for CUDA and can install the CUDA PyTorch wheel automatically. CPU mode works, but full chapter rendering is slower.
 
 </details>
 
@@ -387,11 +278,11 @@ Use the visual editor to adjust individual bubbles and re-render. The renderer u
 
 BTA MangaTranslate is local-first:
 
-- Uploaded pages stay on your machine.
-- Translation calls go to local Ollama at `localhost:11434`.
-- The backend runs on `localhost:8000` unless you expose it yourself.
+- pages are processed on your machine;
+- translation calls go to local Ollama at `localhost:11434`;
+- the backend runs at `localhost:8000` unless you expose it yourself.
 
-Network access is used for first-time dependency and model downloads from Python/PyPI/PyTorch/Hugging Face/Ollama sources.
+Network access is used for first-time dependency and model downloads.
 
 ## Responsible Use
 
