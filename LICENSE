@@ -1,0 +1,57 @@
+BTA MangaTranslate Non-Commercial License
+
+Copyright (c) 2026 BTA Studio and contributors
+
+Permission is granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to use, copy,
+modify, and distribute the Software for non-commercial purposes only, subject to
+the following conditions:
+
+1. Non-commercial use only.
+   The Software may be used for personal, educational, research, hobby,
+   archival, accessibility, testing, or internal non-commercial purposes.
+
+2. Commercial use is not permitted without prior written permission from the
+   copyright holder.
+   Prohibited commercial uses include, but are not limited to:
+   - selling, licensing, renting, or sublicensing the Software;
+   - offering the Software as part of a paid product, paid service, SaaS,
+     hosted service, or commercial extension;
+   - using the Software to provide paid client work, paid translation services,
+     or commercial production services;
+   - redistributing modified or unmodified copies for commercial advantage;
+   - using the Software in advertising-supported or monetized products.
+
+3. Distribution.
+   Non-commercial redistribution is allowed if this license notice and the
+   copyright notice are included in all copies or substantial portions of the
+   Software.
+
+4. Modifications.
+   Non-commercial modified versions are allowed if they clearly state that they
+   are modified from BTA MangaTranslate and include this license.
+
+5. Third-party components.
+   Third-party libraries, models, fonts, tools, and sample assets included with
+   or used by the Software remain under their own licenses. This license does
+   not grant rights beyond those third-party licenses.
+
+6. User responsibility and third-party rights.
+   You are solely responsible for the content you translate, store, share,
+   publish, or redistribute with the Software. Use the Software only for
+   content you own, have purchased, or have permission to process. This license
+   does not authorize copyright infringement or violation of any third-party
+   rights. The authors and copyright holders are not responsible for improper,
+   illegal, or unauthorized use of the Software.
+
+7. No warranty.
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+   FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+   IN THE SOFTWARE.
+
+Project repository:
+https://github.com/JpAndreBTA/BTA-Manga-Translator

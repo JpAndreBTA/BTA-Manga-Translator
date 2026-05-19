@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BTA MangaTranslate</title>
+    <link rel="icon" href="icons/icon-32.png">
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <div class="popup-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark"><img src="icons/icon-32.png" alt="" aria-hidden="true"></div>
+          <div class="brand-copy">
+            <div class="brand-line">
+              <strong>BTA</strong>
+              <span>MangaTranslate</span>
+            </div>
+            <small data-i18n="poweredBy">powered by BTA Studio</small>
+          </div>
+        </div>
+
+        <div class="top-actions">
+          <label class="ui-lang" data-i18n-title="uiLanguageTitle">
+            <span aria-hidden="true">文</span>
+            <select id="uiLang" aria-label="Idioma da interface">
+              <option value="pt">PT</option>
+              <option value="en">EN</option>
+              <option value="ja">JA</option>
+              <option value="ko">KO</option>
+              <option value="es">ES</option>
+              <option value="fr">FR</option>
+              <option value="id">ID</option>
+            </select>
+          </label>
+          <a id="health" class="ghost-btn github-btn" href="https://github.com/JpAndreBTA/BTA-Manga-Translator" target="_blank" rel="noreferrer" title="GitHub" aria-label="GitHub">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M12 2C6.48 2 2 6.58 2 12.26c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49v-1.72c-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.36 1.12 2.93.86.09-.67.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.04 1.03-2.76-.1-.26-.45-1.31.1-2.72 0 0 .84-.28 2.75 1.05A9.3 9.3 0 0 1 12 6.98c.85 0 1.7.12 2.5.34 1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.46.1 2.72.64.72 1.03 1.64 1.03 2.76 0 3.94-2.34 4.8-4.57 5.06.36.32.68.95.68 1.92v2.85c0 .27.18.59.69.49A10.16 10.16 0 0 0 22 12.26C22 6.58 17.52 2 12 2Z"/>
+            </svg>
+          </a>
+        </div>
+      </header>
+
+      <nav class="tabs" data-i18n-aria-label="navLabel" aria-label="Navegação do popup">
+        <button class="tab active" data-tab="translate" data-i18n="tabTranslate">TRADUZIR</button>
+        <button class="tab" data-tab="tools" data-i18n="tabTools">FERRAMENTAS</button>
+        <button class="tab" data-tab="settings" data-i18n="tabSettings">AJUSTES</button>
+      </nav>
+
+      <main class="panel-wrap">
+        <section id="panel-translate" class="panel active">
+          <div class="card">
+            <h2><span class="section-icon">»</span><span data-i18n="sectionLanguage">TRADUÇÃO DE IDIOMA</span></h2>
+            <div class="language-grid">
+              <label>
+                <span data-i18n="sourceLabel">ORIGEM</span>
+                <select id="sourceLang"></select>
+              </label>
+              <button id="swapLangs" class="swap-btn" data-i18n-title="swapTitle" title="Inverter idiomas">⇄</button>
+              <label>
+                <span data-i18n="targetLabel">DESTINO</span>
+                <select id="targetLang"></select>
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2><span class="section-icon">↯</span><span data-i18n="sectionAi">INTELIGÊNCIA ARTIFICIAL</span></h2>
+            <label class="switch-row">
+              <span>
+                <strong data-i18n="autoTitle">Auto-Tradução de Páginas</strong>
+                <small data-i18n="autoDesc">Traduzir novas páginas automaticamente</small>
+              </span>
+              <input id="autoTranslate" type="checkbox">
+            </label>
+            <label class="switch-row">
+              <span>
+                <strong data-i18n="fastTitle">Modo Rápido</strong>
+                <small data-i18n="fastDesc">Pula análise contextual para responder mais rápido</small>
+              </span>
+              <input id="fastMode" type="checkbox" checked>
+            </label>
+          </div>
+
+          <button id="translateVisible" class="primary-action">
+            <span data-i18n="translateButton">TRADUZIR PÁGINA ATUAL</span>
+            <span class="play-dot">▷</span>
+          </button>
+
+          <div class="mini-row">
+            <span id="sessionInfo" data-i18n="sessionWaiting">Sessão atual: aguardando</span>
+            <button id="resetPage" data-i18n="resetPage">Resetar Página</button>
+          </div>
+        </section>
+
+        <section id="panel-tools" class="panel">
+          <div class="tool-grid">
+            <button id="snipTool" class="tool-tile">
+              <span class="tile-icon">＋</span>
+              <strong data-i18n="snipTitle">Recortar Área</strong>
+              <small data-i18n="snipDesc">Snip & Ask AI</small>
+            </button>
+            <button id="paintTool" class="tool-tile">
+              <span class="tile-icon">⌕</span>
+              <strong data-i18n="paintTitle">Pintura Manual</strong>
+              <small data-i18n="paintDesc">Apagar texto</small>
+            </button>
+          </div>
+
+          <div class="card">
+            <h2><span class="section-icon">≋</span><span data-i18n="sectionStyles">ESTILOS GLOBAIS DE RENDERIZAÇÃO</span></h2>
+            <label class="range-row">
+              <span data-i18n="fontSizeLabel">Tamanho da Fonte</span>
+              <strong id="fontSizeValue">100%</strong>
+              <input id="fontSize" type="range" min="50" max="220" step="5" value="100">
+            </label>
+            <label class="range-row">
+              <span data-i18n="outlineSizeLabel">Tamanho do Contorno</span>
+              <strong id="outlineSizeValue">4px</strong>
+              <input id="outlineSize" type="range" min="0" max="96" value="4">
+            </label>
+            <label class="range-row">
+              <span data-i18n="opacityLabel">Opacidade do Balão</span>
+              <strong id="opacityValue">100%</strong>
+              <input id="balloonOpacity" type="range" min="20" max="100" value="100">
+            </label>
+            <label class="stack-field">
+              <span data-i18n="fontFamilyLabel">Família da Fonte</span>
+              <select id="fontFamily">
+                <option>Anime Ace</option>
+                <option>Anime Sans</option>
+                <option>Comic Bold</option>
+                <option>Impact</option>
+                <option>Marker</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section id="panel-settings" class="panel">
+          <div class="card">
+            <h2><span class="section-icon">◎</span><span data-i18n="sectionProvider">MOTOR DE TRADUÇÃO AI</span></h2>
+            <label class="stack-field">
+              <span data-i18n="engineLabel">Motor de Tradução Ativo</span>
+              <select id="engine">
+                <option data-i18n="engineBta">BTA Engine Ultra v2.5 (Recomendado)</option>
+                <option data-i18n="engineGemma">Ollama Local - Gemma 3</option>
+                <option data-i18n="engineLlava">Ollama Local - LLaVA</option>
+              </select>
+            </label>
+            <label class="stack-field">
+              <span data-i18n="adaptationLabel">Modo de Adaptação de Gírias</span>
+              <select id="adaptation">
+                <option data-i18n="adaptFaithful">Fiel ao Contexto Ocidental</option>
+                <option data-i18n="adaptLiteral">Literal</option>
+                <option data-i18n="adaptNatural">Natural Brasileiro</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="card">
+            <h2><span class="section-icon">▣</span><span data-i18n="sectionSystem">SISTEMA E ATALHOS</span></h2>
+            <div class="shortcut-row">
+              <span data-i18n="shortcutLabel">Atalho de Tradução Instantânea</span>
+              <kbd>Alt + T</kbd>
+            </div>
+            <div class="mini-row inside">
+              <span data-i18n="exportConfig">Exportar Configurações</span>
+              <button id="backupSettings" data-i18n="backupButton">Fazer Backup</button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <a class="studio-link" href="https://github.com/JpAndreBTA/BTA-Manga-Translator" target="_blank" rel="noreferrer"><i></i><span>GitHub</span></a>
+        <a id="helpLink" class="donate-btn" href="https://www.paypal.com/donate/?hosted_button_id=H33M9F9S2MZ38" target="_blank" rel="noreferrer">Donate</a>
+      </footer>
+
+      <p id="status" class="status" role="status" data-i18n="statusUnchecked">Servidor: não verificado</p>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

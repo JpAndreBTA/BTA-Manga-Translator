@@ -1,0 +1,3816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BTA MangaTranslate</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0; padding: 0;
+    background: #1a1a1a; color: #e0e0e0;
+    min-height: 100vh;
+  }
+  header {
+    background: #0f0f0f; padding: 16px 24px;
+    border-bottom: 1px solid #333;
+    display: flex; gap: 16px; align-items: center;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 500; color: #f0f0f0; }
+  .tabs { display: flex; gap: 4px; margin-left: 24px; flex: 1; }
+  .tab {
+    padding: 8px 16px; cursor: pointer; border-radius: 6px;
+    color: #999; font-size: 14px; transition: all 0.15s;
+  }
+  .tab:hover { background: #222; color: #ddd; }
+  .tab.active { background: #2a4d7a; color: #fff; }
+  .lang-switcher {
+    display: flex; gap: 4px; background: #222;
+    padding: 4px; border-radius: 6px;
+  }
+  .lang-btn {
+    padding: 4px 10px; cursor: pointer; border-radius: 4px;
+    font-size: 12px; color: #999; transition: all 0.15s;
+  }
+  .lang-btn.active { background: #2a4d7a; color: #fff; }
+  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* Translate panel */
+  .upload-zone {
+    border: 2px dashed #444; border-radius: 12px;
+    padding: 60px 20px; text-align: center;
+    cursor: pointer; transition: all 0.15s;
+    background: #222;
+  }
+  .upload-zone:hover, .upload-zone.drag {
+    border-color: #4a7fc0; background: #1e2a3a;
+  }
+  .upload-zone p { margin: 8px 0; color: #999; }
+  .upload-zone strong { color: #ddd; }
+  .config {
+    margin-top: 24px; display: grid;
+    grid-template-columns: 1fr 1fr; gap: 16px;
+    background: #222; padding: 20px; border-radius: 12px;
+  }
+  .config label { display: block; font-size: 12px; color: #999; margin-bottom: 6px; }
+  .config input, .config select {
+    width: 100%; padding: 8px 10px;
+    background: #1a1a1a; border: 1px solid #444;
+    color: #e0e0e0; border-radius: 6px; font-size: 14px;
+  }
+  .config .checkbox { display: flex; align-items: center; gap: 8px; }
+  .config .checkbox input { width: auto; }
+
+  button {
+    padding: 10px 20px; background: #2a4d7a;
+    color: #fff; border: none; border-radius: 6px;
+    cursor: pointer; font-size: 14px; transition: all 0.15s;
+  }
+  button:hover { background: #3a5d8a; }
+  button:disabled { background: #333; color: #666; cursor: not-allowed; }
+  .btn-secondary { background: #3a3a3a; }
+  .btn-secondary:hover { background: #4a4a4a; }
+  .btn-danger { background: #802a2a; }
+  .btn-danger:hover { background: #a03a3a; }
+
+  /* Progress */
+  .progress-wrapper { margin-top: 24px; }
+  .progress-bar {
+    height: 8px; background: #2a2a2a; border-radius: 4px;
+    overflow: hidden; margin: 12px 0;
+  }
+  .progress-fill {
+    height: 100%; background: linear-gradient(90deg, #2a4d7a, #4a7fc0);
+    transition: width 0.3s; width: 0%;
+  }
+  .progress-meta { display: flex; justify-content: space-between; font-size: 13px; color: #999; }
+
+  /* Export bar — appears under the progress log */
+  .export-bar {
+    margin-top: 16px;
+    display: flex; align-items: center; gap: 12px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    background: #1a1a1a; border-radius: 8px;
+    border: 1px solid #2a2a2a;
+  }
+  .export-bar .export-hint {
+    color: #888; font-size: 13px; margin-right: auto;
+  }
+  .export-bar button {
+    padding: 8px 14px; font-size: 13px;
+  }
+
+  /* Page grid */
+  .pages-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px; margin-top: 24px;
+  }
+  .page-card {
+    background: #222; border-radius: 8px; overflow: hidden;
+    cursor: pointer; transition: transform 0.15s;
+    position: relative;
+  }
+  .page-card:hover { transform: translateY(-2px); }
+  .page-card img { width: 100%; display: block; }
+  .page-card .meta {
+    padding: 10px 12px; font-size: 12px; color: #999;
+    display: flex; justify-content: space-between;
+  }
+
+  /* Skeleton for in-progress page */
+  .page-card.processing {
+    cursor: default; pointer-events: none;
+  }
+  .page-card.processing img {
+    filter: blur(8px) brightness(0.4);
+    transition: filter 0.3s;
+  }
+  .page-card .skeleton-overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px; pointer-events: none;
+  }
+  .spinner {
+    width: 48px; height: 48px;
+    border: 4px solid rgba(255, 255, 255, 0.1);
+    border-top-color: #4a7fc0;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .skeleton-stage {
+    color: #fff; font-size: 14px; font-weight: 500;
+    text-align: center; padding: 0 16px;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  }
+  .skeleton-stage .substep {
+    display: block; font-size: 12px; font-weight: 400;
+    color: #ccc; margin-top: 4px;
+  }
+  /* Placeholder card when we don't have a thumbnail yet */
+  .page-card.processing .placeholder {
+    width: 100%; aspect-ratio: 2 / 3;
+    background: linear-gradient(135deg, #2a2a2a, #1a1a1a);
+  }
+
+  /* Editor */
+  .editor-layout {
+    display: grid; grid-template-columns: 2fr 1fr; gap: 24px;
+    height: calc(100vh - 180px);
+  }
+  .editor-image {
+    background: #222; border-radius: 8px; overflow: auto;
+    position: relative;
+  }
+  .editor-image img { width: 100%; display: block; }
+  .editor-side {
+    background: #222; border-radius: 8px;
+    padding: 16px; overflow-y: auto;
+  }
+  .bubble-item {
+    background: #1a1a1a; border-radius: 6px;
+    padding: 12px; margin-bottom: 10px;
+    border-left: 3px solid #2a4d7a;
+  }
+  .bubble-item .num { font-weight: 600; color: #4a7fc0; font-size: 12px; }
+  .bubble-item .original {
+    color: #777; font-size: 12px; margin: 6px 0;
+    font-family: monospace;
+  }
+  .bubble-item .speaker { font-size: 11px; color: #999; margin-bottom: 6px; }
+  .bubble-item textarea {
+    width: 100%; min-height: 60px;
+    background: #2a2a2a; border: 1px solid #444;
+    color: #e0e0e0; border-radius: 4px;
+    padding: 6px 8px; font-size: 13px; resize: vertical;
+    font-family: inherit;
+  }
+  .bubble-item .bubble-style {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 6px; font-size: 12px; color: #aaa;
+    flex-wrap: wrap;
+  }
+  .bubble-item .bubble-style label {
+    margin: 0; font-size: 12px; color: #888;
+  }
+  .bubble-item .bubble-style input[type="text"] {
+    flex: 1; min-width: 90px;
+    background: #2a2a2a; border: 1px solid #444; color: #e0e0e0;
+    border-radius: 4px; padding: 4px 6px; font-size: 12px;
+  }
+  .bubble-item .bubble-style input[type="number"] {
+    width: 64px;
+    background: #2a2a2a; border: 1px solid #444; color: #e0e0e0;
+    border-radius: 4px; padding: 4px 6px; font-size: 12px;
+  }
+  .editor-toolbar {
+    display: flex; gap: 8px; justify-content: space-between;
+    padding-bottom: 12px; margin-bottom: 12px;
+    border-bottom: 1px solid #333;
+  }
+  .editor-toolbar select {
+    background: #2a2a2a; border: 1px solid #444;
+    color: #e0e0e0; border-radius: 4px; padding: 6px 10px;
+  }
+
+  /* Characters */
+  .characters-list { display: grid; gap: 12px; }
+  .character-card {
+    background: #222; border-radius: 8px; padding: 16px;
+    display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 16px;
+    align-items: start;
+  }
+  .character-card .field label {
+    display: block; font-size: 11px; color: #888;
+    margin-bottom: 4px; text-transform: uppercase;
+  }
+  .character-card .field input,
+  .character-card .field textarea {
+    width: 100%; background: #1a1a1a; border: 1px solid #333;
+    color: #e0e0e0; border-radius: 4px; padding: 6px 8px;
+    font-size: 13px; font-family: inherit;
+  }
+  .character-card .field textarea { min-height: 40px; resize: vertical; }
+  .character-card .id-tag {
+    grid-column: 1 / -1;
+    font-family: monospace; font-size: 11px; color: #666;
+  }
+
+  /* Log */
+  .log {
+    margin-top: 12px; max-height: 200px; overflow-y: auto;
+    background: #0f0f0f; border-radius: 6px;
+    padding: 12px; font-family: monospace; font-size: 12px;
+    color: #aaa;
+  }
+  .log .ok { color: #6fcf97; }
+  .log .err { color: #eb5757; }
+  .log .warn { color: #f2c94c; }
+
+  .empty {
+    text-align: center; padding: 60px 20px;
+    color: #666; font-style: italic;
+  }
+
+  /* Job id pill in header */
+  .job-id-pill {
+    display: none; align-items: center; gap: 8px;
+    background: #1e2a3a; border: 1px solid #2a4d7a;
+    border-radius: 6px; padding: 4px 10px;
+    font-size: 12px; color: #aac4e0;
+    margin-right: 12px;
+  }
+  .job-id-pill.visible { display: inline-flex; }
+  .job-id-pill .job-label { color: #6a8aaa; }
+  .job-id-pill code {
+    background: rgba(0, 0, 0, 0.3); padding: 2px 6px;
+    border-radius: 3px; font-family: monospace;
+    user-select: all; cursor: text;
+  }
+  .help-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; margin-left: 8px;
+    border-radius: 50%; background: #444; color: #ccc;
+    font-size: 11px; font-weight: bold; cursor: help;
+    position: relative; transition: background 0.15s;
+  }
+  .help-icon:hover { background: #4a7fc0; color: #fff; }
+  .help-icon .tooltip {
+    visibility: hidden; opacity: 0;
+    position: absolute; top: 24px; left: -120px;
+    width: 280px; background: #0f0f0f;
+    border: 1px solid #444; border-radius: 8px;
+    padding: 12px; font-size: 12px; font-weight: normal;
+    color: #ddd; text-align: left;
+    z-index: 100; transition: opacity 0.15s;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  .help-icon:hover .tooltip { visibility: visible; opacity: 1; }
+  .tooltip .legend-row {
+    display: flex; align-items: center; gap: 8px; margin: 6px 0;
+  }
+  .tooltip .swatch {
+    width: 16px; height: 16px; border-radius: 3px;
+    border: 2px solid; background: transparent;
+    flex-shrink: 0;
+  }
+  .tooltip .label { color: #ccc; }
+  .tooltip h4 {
+    margin: 0 0 8px 0; font-size: 13px; color: #fff;
+    font-weight: 500;
+  }
+
+  :root {
+    --bg: #0b0d10;
+    --panel: #13171d;
+    --panel-2: #181d24;
+    --line: #252d38;
+    --line-soft: #1c232d;
+    --text: #edf2f7;
+    --muted: #94a3b8;
+    --muted-2: #64748b;
+    --accent: #38bdf8;
+    --accent-2: #22c55e;
+    --danger: #ef4444;
+    --warn: #f59e0b;
+  }
+
+  body {
+    background:
+      linear-gradient(180deg, rgba(56, 189, 248, 0.08), transparent 260px),
+      var(--bg);
+    color: var(--text);
+  }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    min-height: 68px;
+    padding: 0 28px;
+    background: rgba(11, 13, 16, 0.88);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  header h1 {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0;
+  }
+
+  .tabs {
+    margin-left: 18px;
+    gap: 6px;
+  }
+
+  .tab {
+    padding: 9px 13px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .tab:hover {
+    background: var(--panel);
+    color: var(--text);
+  }
+
+  .tab.active {
+    background: #102536;
+    border-color: rgba(56, 189, 248, 0.38);
+    color: #e0f2fe;
+  }
+
+  .lang-switcher {
+    background: var(--panel);
+    border: 1px solid var(--line);
+  }
+
+  .lang-btn.active {
+    background: var(--accent);
+    color: #031018;
+  }
+
+  main {
+    max-width: 1480px;
+    padding: 28px;
+  }
+
+  .panel.active {
+    animation: panelIn 0.16s ease-out;
+  }
+
+  @keyframes panelIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .workflow-shell {
+    display: grid;
+    grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.25fr);
+    gap: 18px;
+    align-items: start;
+  }
+
+  .hero-panel,
+  .settings-panel,
+  .progress-wrapper,
+  .editor-side,
+  .editor-image,
+  .character-card,
+  .card,
+  .tool-tile {
+    background: rgba(19, 23, 29, 0.92);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
+  }
+
+  .hero-panel {
+    padding: 18px;
+  }
+
+  .hero-copy {
+    margin-bottom: 16px;
+  }
+
+  .eyebrow {
+    margin: 0 0 8px;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0;
+  }
+
+  .hero-copy h2 {
+    display: block;
+    margin: 0 0 8px;
+    color: var(--text);
+    font-size: 24px;
+    line-height: 1.15;
+    font-weight: 900;
+  }
+
+  .hero-copy p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .upload-zone {
+    min-height: 280px;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background:
+      linear-gradient(180deg, rgba(56, 189, 248, 0.08), rgba(34, 197, 94, 0.04)),
+      #0f141b;
+    border: 1px dashed #38566f;
+    border-radius: 8px;
+  }
+
+  .upload-zone:hover,
+  .upload-zone.drag {
+    border-color: var(--accent);
+    background: #10202b;
+  }
+
+  .upload-inner {
+    max-width: 390px;
+    text-align: center;
+  }
+
+  .upload-icon {
+    width: 54px;
+    height: 54px;
+    margin: 0 auto 14px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    background: #123047;
+    color: #bae6fd;
+    font-size: 26px;
+    font-weight: 900;
+  }
+
+  .upload-zone p {
+    margin: 5px 0;
+    color: var(--muted);
+  }
+
+  .upload-zone strong {
+    color: var(--text);
+    font-size: 17px;
+  }
+
+  .upload-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 14px;
+  }
+
+  .upload-meta span,
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: #cbd5e1;
+    background: rgba(15, 20, 27, 0.9);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .settings-panel {
+    padding: 16px;
+  }
+
+  #panel-translate > .config::before {
+    content: "Render settings";
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 28px;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 900;
+  }
+
+  #panel-translate > .config::after {
+    content: "Inpaint enabled";
+    grid-column: 1 / -1;
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border: 1px solid rgba(34, 197, 94, 0.38);
+    border-radius: 999px;
+    color: #bbf7d0;
+    background: rgba(20, 83, 45, 0.28);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .settings-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+
+  .settings-head h2 {
+    margin: 0;
+    color: var(--text);
+    font-size: 15px;
+  }
+
+  .status-chip.inpaint {
+    color: #bbf7d0;
+    border-color: rgba(34, 197, 94, 0.38);
+    background: rgba(20, 83, 45, 0.28);
+  }
+
+  .config {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .config .full {
+    grid-column: 1 / -1;
+  }
+
+  .config label,
+  label > span,
+  .range-row > span,
+  .stack-field span {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .config input,
+  .config select,
+  select,
+  .bubble-item textarea,
+  .bubble-item .bubble-style input[type="text"],
+  .bubble-item .bubble-style input[type="number"],
+  .editor-toolbar select,
+  .character-card .field input,
+  .character-card .field textarea {
+    height: 36px;
+    background: #0d1218;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--text);
+  }
+
+  .config .checkbox {
+    min-height: 38px;
+    padding: 9px 10px;
+    background: #0d1218;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+  }
+
+  button {
+    min-height: 36px;
+    border-radius: 7px;
+    background: var(--accent);
+    color: #031018;
+    font-weight: 900;
+  }
+
+  button:hover {
+    background: #7dd3fc;
+  }
+
+  .btn-secondary {
+    background: #202936;
+    color: var(--text);
+    border: 1px solid var(--line);
+  }
+
+  .btn-secondary:hover {
+    background: #273244;
+  }
+
+  .btn-danger {
+    background: #3a1418;
+    color: #fecaca;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+  }
+
+  .progress-wrapper {
+    padding: 16px;
+  }
+
+  .progress-bar {
+    height: 10px;
+    background: #0d1218;
+  }
+
+  .progress-fill {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  }
+
+  .export-bar {
+    background: #0d1218;
+    border-color: var(--line);
+  }
+
+  .pages-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  }
+
+  .page-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  .page-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(56, 189, 248, 0.45);
+  }
+
+  .page-card .meta {
+    color: var(--muted);
+    gap: 8px;
+    align-items: center;
+  }
+
+  .page-card .meta a {
+    color: #bae6fd;
+    text-decoration: none;
+    font-weight: 900;
+  }
+
+  .log {
+    background: #0d1218;
+    border: 1px solid var(--line-soft);
+  }
+
+  .editor-layout {
+    height: calc(100vh - 164px);
+  }
+
+  @media (max-width: 980px) {
+    header {
+      min-height: auto;
+      padding: 12px 16px;
+      flex-wrap: wrap;
+    }
+
+    .tabs {
+      order: 3;
+      width: 100%;
+      margin-left: 0;
+    }
+
+    main {
+      padding: 16px;
+    }
+
+    .workflow-shell,
+    .editor-layout,
+    .config {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* BTA backend redesign layer, inspired by Backend Design.txt. */
+  :root {
+    --bg: #070709;
+    --side: #111114;
+    --panel: #151519;
+    --panel-2: #1a1a1f;
+    --field: #101014;
+    --line: #292931;
+    --line-soft: #202026;
+    --text: #f5f5f7;
+    --muted: #a1a1aa;
+    --muted-2: #6f6f7a;
+    --accent: #ef3f5f;
+    --accent-2: #be123c;
+    --success: #00d09c;
+    --sidebar-width: 376px;
+  }
+
+  body {
+    background:
+      linear-gradient(90deg, rgba(239, 63, 95, 0.05), transparent 430px),
+      radial-gradient(circle at 70% -20%, rgba(239, 63, 95, 0.08), transparent 360px),
+      var(--bg);
+    color: var(--text);
+    overflow-x: hidden;
+  }
+
+  header {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 20;
+    width: var(--sidebar-width);
+    height: 100vh;
+    min-height: 0;
+    padding: 24px 24px 22px;
+    background: linear-gradient(180deg, rgba(17, 17, 20, 0.98), rgba(12, 12, 15, 0.98));
+    border-right: 1px solid var(--line-soft);
+    border-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  header h1 {
+    position: relative;
+    margin: 0 0 6px;
+    min-height: 44px;
+    padding-left: 52px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    color: var(--text);
+    font-size: 0;
+    font-weight: 900;
+    letter-spacing: 0;
+  }
+
+  header h1 span {
+    font-size: 16px;
+  }
+
+  header h1::before {
+    content: "BTA";
+    position: absolute;
+    left: 0;
+    top: 2px;
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #ff4d66, #c11236);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 950;
+    box-shadow: 0 12px 28px rgba(239, 63, 95, 0.28);
+  }
+
+  header h1::after {
+    content: "powered by BTA Studio";
+    margin-top: 2px;
+    color: var(--muted-2);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .tabs {
+    width: 100%;
+    margin: 8px 0 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+
+  .tab {
+    min-height: 38px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .tab::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  .tab:hover {
+    background: #18181d;
+    color: var(--text);
+  }
+
+  .tab.active {
+    background: rgba(239, 63, 95, 0.1);
+    border-color: rgba(239, 63, 95, 0.36);
+    color: #ff4d66;
+    box-shadow: 0 16px 28px rgba(239, 63, 95, 0.08);
+  }
+
+  .tab.active::after {
+    background: #ff4d66;
+    box-shadow: 0 0 12px rgba(255, 77, 102, 0.9);
+  }
+
+  .job-id-pill {
+    width: 100%;
+    justify-content: space-between;
+    background: var(--panel);
+    border-color: var(--line);
+    border-radius: 8px;
+  }
+
+  .lang-switcher {
+    align-self: flex-start;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+
+  .lang-btn {
+    border-radius: 999px;
+    font-weight: 900;
+  }
+
+  .lang-btn.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .backend-links {
+    margin-top: auto;
+    padding-top: 16px;
+    display: grid;
+    gap: 10px;
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .backend-links a {
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .backend-links .studio-link {
+    background: var(--panel);
+  }
+
+  .backend-links .donate-link {
+    background: linear-gradient(135deg, #f59e0b, #f97316);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #130b02;
+    box-shadow: 0 16px 30px rgba(245, 158, 11, 0.18);
+  }
+
+  main {
+    width: calc(100% - var(--sidebar-width));
+    max-width: none;
+    min-height: 100vh;
+    margin: 0 0 0 var(--sidebar-width);
+    padding: 22px clamp(22px, 3vw, 44px) 40px;
+    border-left: 1px solid rgba(255, 255, 255, 0.02);
+  }
+
+  #panel-translate.panel.active {
+    display: grid;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    grid-template-areas:
+      "config upload"
+      "config progress"
+      "config pages";
+    gap: 28px;
+    align-items: start;
+  }
+
+  .upload-zone {
+    grid-area: upload;
+    min-height: 220px;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background:
+      linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+      radial-gradient(circle at center, rgba(239, 63, 95, 0.06), transparent 420px),
+      #09090c;
+    background-size: 28px 28px, 28px 28px, auto, auto;
+    border: 2px dashed #2d2d35;
+    border-radius: 8px;
+  }
+
+  .upload-zone:hover,
+  .upload-zone.drag {
+    border-color: var(--accent);
+    background-color: #0e0e12;
+  }
+
+  .upload-icon {
+    background: #181821;
+    border: 1px solid rgba(239, 63, 95, 0.38);
+    color: #ff4d66;
+  }
+
+  .upload-meta span,
+  .status-chip {
+    color: #d4d4dd;
+    background: rgba(16, 16, 20, 0.92);
+    border-color: var(--line);
+  }
+
+  #panel-translate > .config {
+    grid-area: config;
+    position: sticky;
+    top: 22px;
+    margin: 0;
+    padding: 20px 16px;
+    background: rgba(21, 21, 25, 0.92);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  #panel-translate > .config::before {
+    content: "Configuracoes de renderizacao";
+    grid-column: 1 / -1;
+    min-height: 26px;
+    color: #ff4d66;
+    font-size: 13px;
+    font-weight: 950;
+    text-transform: uppercase;
+  }
+
+  #panel-translate > .config::after {
+    content: "Inpaint inteligente ativado";
+    grid-column: 1 / -1;
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border: 1px solid rgba(0, 208, 156, 0.34);
+    border-radius: 999px;
+    color: #5fffd0;
+    background: rgba(0, 208, 156, 0.08);
+    font-size: 11px;
+    font-weight: 900;
+  }
+
+  .config label,
+  label > span,
+  .range-row > span,
+  .stack-field span {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .config input,
+  .config select,
+  select,
+  .bubble-item textarea,
+  .bubble-item .bubble-style input[type="text"],
+  .bubble-item .bubble-style input[type="number"],
+  .editor-toolbar select,
+  .character-card .field input,
+  .character-card .field textarea {
+    background: var(--field);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+  }
+
+  .config .checkbox {
+    min-height: 38px;
+    padding: 9px 10px;
+    background: var(--field);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  button {
+    min-height: 36px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    font-weight: 900;
+  }
+
+  button:hover {
+    background: linear-gradient(135deg, #ff5b75, #e11d48);
+  }
+
+  .btn-secondary {
+    background: #1c1c22;
+    color: var(--text);
+    border: 1px solid var(--line);
+  }
+
+  .btn-secondary:hover {
+    background: #25252c;
+  }
+
+  .progress-wrapper {
+    grid-area: progress;
+    padding: 16px;
+  }
+
+  .progress-fill {
+    background: linear-gradient(90deg, var(--accent), #f97316);
+  }
+
+  .export-bar,
+  .log {
+    background: var(--field);
+    border-color: var(--line-soft);
+  }
+
+  .pages-grid {
+    grid-area: pages;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  }
+
+  .page-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  .page-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(239, 63, 95, 0.45);
+  }
+
+  .page-card .meta a {
+    color: #ff6b82;
+    text-decoration: none;
+    font-weight: 900;
+  }
+
+  .editor-image,
+  .editor-side,
+  .character-card {
+    background: rgba(21, 21, 25, 0.94);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  @media (max-width: 1100px) {
+    header {
+      position: static;
+      width: auto;
+      min-height: auto;
+      padding: 12px 16px;
+      flex-direction: row;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .tabs {
+      order: 3;
+      width: 100%;
+      margin-left: 0;
+      flex-direction: row;
+      overflow-x: auto;
+    }
+
+    .tab {
+      flex: 1 0 140px;
+    }
+
+    .backend-links {
+      width: 100%;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 0;
+    }
+
+    main {
+      width: 100%;
+      margin-left: 0;
+      padding: 16px;
+    }
+
+    #panel-translate.panel.active {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "upload"
+        "config"
+        "progress"
+        "pages";
+    }
+
+    #panel-translate > .config {
+      position: static;
+    }
+  }
+
+  /* Reference-accurate backend shell. */
+  :root {
+    --sidebar-width: 376px;
+    --bg: #050507;
+    --side: #121216;
+    --panel: #151519;
+    --field: #0d0d11;
+    --line: #282831;
+    --muted: #8b8b96;
+    --text: #f6f4f7;
+    --accent: #ef3f5f;
+    --accent-2: #d92749;
+    --success: #00d09c;
+  }
+
+  body {
+    background: var(--bg);
+  }
+
+  header {
+    width: var(--sidebar-width);
+    padding: 22px 24px;
+    gap: 18px;
+    background: linear-gradient(180deg, #141418 0%, #101014 100%);
+  }
+
+  header h1 {
+    min-height: 38px;
+    margin: 0;
+    padding-left: 48px;
+  }
+
+  header h1::before {
+    width: 34px;
+    height: 34px;
+    top: 1px;
+    border-radius: 9px;
+  }
+
+  header h1 span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  header h1 span::after {
+    content: "V1";
+    height: 16px;
+    padding: 0 5px;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(239, 63, 95, 0.55);
+    border-radius: 4px;
+    color: #ff4d66;
+    font-size: 9px;
+    font-weight: 950;
+  }
+
+  .tabs {
+    margin: 6px 0 0;
+    gap: 7px;
+  }
+
+  .tab {
+    min-height: 38px;
+    border-radius: 8px;
+    color: #a5a3aa;
+    transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+  }
+
+  .tab:hover {
+    transform: translateX(2px);
+  }
+
+  .tab.active {
+    background: rgba(239, 63, 95, 0.08);
+    border-color: rgba(239, 63, 95, 0.55);
+    color: #ff4d66;
+  }
+
+  .tab[data-panel="translate"]::before { content: "↗"; }
+  .tab[data-panel="editor"]::before { content: "✎"; }
+  .tab[data-panel="characters"]::before { content: "◉"; }
+
+  .tab::before {
+    margin-right: 9px;
+    color: currentColor;
+    opacity: 0.9;
+  }
+
+  .tab {
+    justify-content: flex-start;
+  }
+
+  .tab::after {
+    margin-left: auto;
+  }
+
+  .lang-switcher {
+    position: absolute;
+    top: 20px;
+    right: 24px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+  }
+
+  .platform-lang {
+    width: 72px;
+    height: 28px;
+    padding: 0 26px 0 11px;
+    border-radius: 999px;
+    background: #1a1a20;
+    border: 1px solid #2b2b34;
+    color: #d7d3dc;
+    font-size: 11px;
+    font-weight: 900;
+    outline: none;
+  }
+
+  .job-id-pill {
+    display: none;
+  }
+
+  #sidebar-config-slot {
+    min-height: 0;
+  }
+
+  header .config {
+    width: 100%;
+    margin-top: 4px;
+    padding: 24px 16px 14px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 11px;
+    background: rgba(21, 21, 25, 0.92);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: none;
+  }
+
+  #panel-translate > .config::before,
+  #panel-translate > .config::after,
+  header .config::before,
+  header .config::after {
+    content: none;
+    display: none;
+  }
+
+  .config-head {
+    display: block;
+  }
+
+  .config-head h2 {
+    margin: 0 0 5px;
+    color: #ff4d66;
+    font-size: 12px;
+    line-height: 1.25;
+    font-weight: 950;
+    text-transform: uppercase;
+  }
+
+  .config-head p {
+    margin: 0;
+    color: #6f6f7a;
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  .config label,
+  label > span {
+    color: #a4a1ab;
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+
+  .config input,
+  .config select {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    background: #111116;
+    border-color: #2b2b34;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .config > div[style*="display:flex"] {
+    display: grid !important;
+    gap: 8px !important;
+  }
+
+  .config .checkbox {
+    min-height: 20px;
+    padding: 0;
+    gap: 9px;
+    background: transparent;
+    border: 0;
+  }
+
+  .config .checkbox input {
+    position: relative;
+    width: 34px;
+    height: 18px;
+    appearance: none;
+    flex: 0 0 34px;
+    border: 1px solid #303039;
+    border-radius: 999px;
+    background: #141419;
+    accent-color: var(--accent);
+    cursor: pointer;
+    transition: background 0.16s ease, border-color 0.16s ease;
+  }
+
+  .config .checkbox input::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    background: #77727e;
+    transition: transform 0.16s ease, background 0.16s ease;
+  }
+
+  .config .checkbox input:checked {
+    background: rgba(239, 63, 95, 0.22);
+    border-color: rgba(239, 63, 95, 0.65);
+  }
+
+  .config .checkbox input:checked::after {
+    transform: translateX(16px);
+    background: #ff4d66;
+    box-shadow: 0 0 10px rgba(255, 77, 102, 0.65);
+  }
+
+  .config .checkbox label {
+    color: #a6a3ac !important;
+    font-size: 11px !important;
+    line-height: 1.25;
+    text-transform: none;
+  }
+
+  .font-toggle-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    max-height: 172px;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #ef3f5f #121216;
+  }
+
+  html,
+  body,
+  .sidebar,
+  .config,
+  .font-toggle-grid,
+  .job-list,
+  .editor-side {
+    color-scheme: dark;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: #101014;
+    border-radius: 999px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #ef3f5f, #a71d38);
+    border-radius: 999px;
+    border: 2px solid #101014;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #ff5b75;
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: #101014;
+  }
+
+  .chapter-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 92px;
+    gap: 8px;
+  }
+
+  .job-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(10px);
+  }
+
+  .job-modal.open {
+    display: flex;
+  }
+
+  .job-dialog {
+    width: min(760px, 100%);
+    max-height: min(720px, 88vh);
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    gap: 14px;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #151519;
+    box-shadow: 0 28px 90px rgba(0, 0, 0, 0.48);
+  }
+
+  .job-dialog > header {
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    border: 0 !important;
+    background: transparent !important;
+    overflow: visible !important;
+  }
+
+  .job-dialog h2 {
+    margin: 0;
+    color: #ff4d66;
+    font-size: 15px;
+    text-transform: uppercase;
+  }
+
+  .job-list {
+    overflow: auto;
+    display: grid;
+    gap: 8px;
+  }
+
+  .job-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid #2b2b34;
+    border-radius: 10px;
+    background: #101014;
+  }
+
+  .job-row strong {
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  .job-row small {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .font-toggle {
+    min-height: 30px;
+    padding: 0 9px;
+    border-radius: 8px;
+    border: 1px solid #2b2b34;
+    background: #111116;
+    color: #a8a4ad;
+    font-size: 10px;
+    font-weight: 900;
+    text-align: left;
+    box-shadow: none;
+    transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+  }
+
+  .font-toggle:hover {
+    transform: translateY(-1px);
+    background: #17171d;
+    border-color: rgba(239, 63, 95, 0.38);
+  }
+
+  .font-toggle.active {
+    background: rgba(239, 63, 95, 0.13);
+    border-color: rgba(239, 63, 95, 0.7);
+    color: #ff5b75;
+    box-shadow: 0 0 18px rgba(239, 63, 95, 0.1);
+  }
+
+  .font-toggle.active::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    margin-right: 6px;
+    display: inline-block;
+    border-radius: 999px;
+    background: #ff4d66;
+    box-shadow: 0 0 10px rgba(255, 77, 102, 0.65);
+    vertical-align: 1px;
+  }
+
+  .help-icon {
+    background: #3a3a3d;
+    color: #e7e2ea;
+    transition: transform 0.16s ease, background 0.16s ease;
+  }
+
+  .help-icon:hover {
+    transform: translateY(-1px);
+    background: #4b4b50;
+  }
+
+  .backend-links {
+    margin-top: 8px;
+    padding-top: 12px;
+    flex: 0 0 auto;
+  }
+
+  .backend-links a::before {
+    color: var(--accent);
+  }
+
+  .backend-links .studio-link::before {
+    content: "▣";
+  }
+
+  .backend-links .donate-link::before {
+    content: "P";
+    color: #120900;
+    font-weight: 950;
+  }
+
+  main {
+    padding: 20px 30px 40px;
+  }
+
+  #panel-translate.panel.active {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "upload"
+      "actions"
+      "progress"
+      "pages";
+    gap: 28px;
+  }
+
+  .upload-zone {
+    min-height: 220px;
+    max-width: 1220px;
+    margin: 0 auto;
+    width: 100%;
+    background:
+      linear-gradient(rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+      #08080b;
+    background-size: 24px 24px;
+    border: 2px dashed #282831;
+    transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease;
+  }
+
+  .upload-zone:hover,
+  .upload-zone.drag {
+    transform: translateY(-1px);
+    border-color: #3a3a44;
+    background-color: #0b0b0e;
+  }
+
+  .upload-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 11px;
+    background: #17171c;
+    border-color: #30303a;
+    box-shadow: 0 0 28px rgba(239, 63, 95, 0.12);
+    animation: uploadIconPulse 2.8s ease-in-out infinite;
+  }
+
+  @keyframes uploadIconPulse {
+    0%, 100% { box-shadow: 0 0 20px rgba(239, 63, 95, 0.08); }
+    50% { box-shadow: 0 0 34px rgba(239, 63, 95, 0.24); }
+  }
+
+  .upload-zone strong {
+    color: #a9a5ad;
+    font-size: 14px;
+    font-weight: 950;
+    text-transform: uppercase;
+  }
+
+  .upload-zone p {
+    color: #696873;
+    font-size: 12px;
+  }
+
+  .upload-meta span {
+    min-height: 20px;
+    border-radius: 4px;
+    color: #c8c2ce;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .chapter-url-button {
+    margin-top: 16px;
+    min-height: 34px;
+    padding: 0 18px;
+    border-radius: 8px;
+    border: 1px solid rgba(239, 63, 95, 0.42);
+    background: rgba(239, 63, 95, 0.1);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 950;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: transform .18s ease, background .18s ease, box-shadow .18s ease;
+  }
+
+  .chapter-url-button:hover {
+    background: rgba(239, 63, 95, 0.2);
+    box-shadow: 0 0 24px rgba(239, 63, 95, 0.18);
+    transform: translateY(-1px);
+  }
+
+  .editor-base-font {
+    min-width: min(360px, 38vw);
+    display: grid;
+    gap: 5px;
+  }
+
+  .editor-base-font label {
+    color: #a4a1ab;
+    font-size: 10px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .editor-base-font select {
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid #2b2b34;
+    background: #111116;
+    color: #f5f5f7;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 800;
+    outline: none;
+  }
+
+  .bubble-font-input {
+    display: none;
+  }
+
+  .bubble-font-toggles {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    max-height: 86px;
+    overflow-y: auto;
+    padding-right: 3px;
+  }
+
+  .bubble-font-toggle {
+    min-height: 30px;
+    padding: 0 9px;
+    border-radius: 8px;
+    border: 1px solid #2b2b34;
+    background: #101014;
+    color: #c8c2ce;
+    font-size: 11px;
+    font-weight: 850;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .bubble-font-toggle.active {
+    border-color: rgba(239, 63, 95, 0.82);
+    background: rgba(239, 63, 95, 0.16);
+    color: #fff;
+  }
+
+  .translate-action-row {
+    grid-area: actions;
+    max-width: 1220px;
+    width: 100%;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .action-context {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .action-context .chapter-fields {
+    width: min(460px, 46vw);
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) 92px;
+    gap: 8px;
+    align-items: end;
+  }
+
+  .action-context label {
+    display: block;
+    margin: 0 0 4px;
+    color: #a4a1ab;
+    font-size: 10px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .action-context input {
+    width: 100%;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid #2b2b34;
+    background: #111116;
+    color: #f5f5f7;
+    font-size: 12px;
+    font-weight: 800;
+    outline: none;
+  }
+
+  .action-context input:focus {
+    border-color: rgba(239, 63, 95, 0.82);
+    box-shadow: 0 0 0 3px rgba(239, 63, 95, 0.12);
+  }
+
+  .inpaint-status {
+    min-height: 24px;
+    padding: 0 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(0, 208, 156, 0.22);
+    background: rgba(0, 208, 156, 0.06);
+    color: #29f7c3;
+    font-size: 11px;
+    font-weight: 950;
+    text-transform: uppercase;
+    box-shadow: 0 0 22px rgba(0, 208, 156, 0.08);
+  }
+
+  .inpaint-status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--success);
+  }
+
+  #btn-start-upload {
+    min-width: 256px;
+    min-height: 38px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #ef3f5f, #d92749);
+    box-shadow: 0 14px 34px rgba(239, 63, 95, 0.22);
+    transition: transform 0.16s ease, box-shadow 0.16s ease;
+  }
+
+  #btn-start-upload:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 18px 42px rgba(239, 63, 95, 0.32);
+  }
+
+  @media (max-width: 1100px) {
+    .lang-switcher {
+      position: static;
+    }
+
+    #sidebar-config-slot,
+    header .config {
+      width: 100%;
+    }
+
+    .translate-action-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .action-context,
+    .action-context .chapter-fields {
+      width: 100%;
+    }
+
+    #btn-start-upload {
+      width: 100%;
+    }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📖 <span data-i18n="app_title">BTA MangaTranslate</span></h1>
+  <div class="tabs">
+    <div class="tab active" data-panel="translate"  data-i18n="tab_translate">Translate</div>
+    <div class="tab" data-panel="editor"             data-i18n="tab_editor">Editor</div>
+    <div class="tab" data-panel="characters"         data-i18n="tab_characters">Characters</div>
+  </div>
+  <div class="job-id-pill" id="job-id-pill">
+    <span class="job-label" data-i18n="job_id_label">Job ID:</span>
+    <code id="job-id-display">—</code>
+    <span class="help-icon" tabindex="0">?
+      <div class="tooltip" style="left: -200px;">
+        <h4 data-i18n="job_id_what_title">What is Job ID?</h4>
+        <div data-i18n="job_id_what_desc">A unique identifier for the current translation job. Use it to reopen this chapter in the Editor tab later — copy the ID and paste it via the "Load job..." button. Results stay available on the server as long as you do not clear them manually.</div>
+      </div>
+    </span>
+  </div>
+  <div class="lang-switcher">
+    <select id="ui-lang-select" class="platform-lang" aria-label="Platform language">
+      <option value="pt">PT-BR</option>
+      <option value="en">EN</option>
+      <option value="es">ES</option>
+      <option value="fr">FR</option>
+      <option value="ja">JA</option>
+      <option value="ko">KO</option>
+      <option value="id">ID</option>
+      <option value="ru">RU</option>
+    </select>
+  </div>
+  <div id="sidebar-config-slot"></div>
+  <div class="backend-links">
+    <a class="studio-link" href="https://github.com/JpAndreBTA/BTA-Manga-Translator" target="_blank" rel="noopener">GitHub</a>
+    <a class="donate-link" href="https://www.paypal.com/donate/?hosted_button_id=H33M9F9S2MZ38" target="_blank" rel="noopener">Apoiar Projeto</a>
+  </div>
+</header>
+
+<main>
+
+<!-- ─── Panel: Translate ─── -->
+<div class="panel active" id="panel-translate">
+  <div class="upload-zone" id="upload-zone">
+    <div class="upload-inner">
+      <div class="upload-icon">+</div>
+      <p><strong data-i18n="upload_drop">Drop chapter pages here</strong></p>
+      <p data-i18n="upload_or_click">or click, paste, or drag web images (jpg, png, webp)</p>
+      <div class="upload-meta">
+        <span data-i18n="upload_tag_multi">Multiple images</span>
+        <span data-i18n="upload_tag_inpaint">Inpaint render</span>
+        <span data-i18n="upload_tag_export">ZIP / CBZ export</span>
+      </div>
+      <button id="btn-chapter-url" class="chapter-url-button" type="button" data-i18n="chapter_url_button">Add chapter URL</button>
+    </div>
+    <input type="file" id="file-input" multiple accept="image/*" style="display:none">
+  </div>
+  <div class="translate-action-row">
+    <div class="action-context">
+      <span class="inpaint-status" data-i18n="inpaint_enabled">Inpaint intelligent enabled</span>
+      <div class="chapter-fields">
+        <div>
+          <label data-i18n="cfg_work_title">Work</label>
+          <input id="cfg-work-title" list="work-title-list" placeholder="Manga title">
+          <datalist id="work-title-list"></datalist>
+        </div>
+        <div>
+          <label data-i18n="cfg_chapter">Chapter</label>
+          <input id="cfg-chapter-number" placeholder="001">
+        </div>
+      </div>
+    </div>
+    <button id="btn-start-upload" type="button">
+      <span data-i18n="start_batch">Start batch translation</span>
+      <span aria-hidden="true">⚡</span>
+    </button>
+  </div>
+
+  <div class="config">
+    <div class="config-head">
+      <h2 data-i18n="render_settings_title">Render settings</h2>
+      <p data-i18n="render_settings_desc">Configure OCR and translation models before batch start</p>
+    </div>
+    <div>
+      <label data-i18n="cfg_source_lang">Source language</label>
+      <select id="cfg-source-lang">
+        <option value="Auto">Auto detect</option>
+        <option value="Japanese">Japanese</option>
+        <option value="Korean">Korean</option>
+        <option value="Chinese">Chinese</option>
+        <option value="English">English</option>
+        <option value="Spanish">Spanish</option>
+        <option value="Portuguese (Brazil)">Portuguese (Brazil)</option>
+      </select>
+    </div>
+    <div>
+      <label data-i18n="cfg_lang">Translation language</label>
+      <select id="cfg-lang">
+        <option value="Arabic">Arabic</option>
+        <option value="Bengali">Bengali</option>
+        <option value="Bulgarian">Bulgarian</option>
+        <option value="Chinese (Simplified)">Chinese (Simplified)</option>
+        <option value="Chinese (Traditional)">Chinese (Traditional)</option>
+        <option value="Czech">Czech</option>
+        <option value="Danish">Danish</option>
+        <option value="Dutch">Dutch</option>
+        <option value="English">English</option>
+        <option value="Filipino">Filipino</option>
+        <option value="Finnish">Finnish</option>
+        <option value="Greek">Greek</option>
+        <option value="Hebrew">Hebrew</option>
+        <option value="Hindi">Hindi</option>
+        <option value="Hungarian">Hungarian</option>
+        <option value="Indonesian">Indonesian</option>
+        <option value="Italian">Italian</option>
+        <option value="Korean">Korean</option>
+        <option value="Malay">Malay</option>
+        <option value="Norwegian">Norwegian</option>
+        <option value="Persian">Persian</option>
+        <option value="Polish">Polish</option>
+        <option value="Portuguese">Portuguese</option>
+        <option value="Portuguese (Brazil)">Portuguese (Brazil)</option>
+        <option value="Romanian">Romanian</option>
+        <option value="Swedish">Swedish</option>
+        <option value="Thai">Thai</option>
+        <option value="Turkish">Turkish</option>
+        <option value="Ukrainian">Ukrainian</option>
+        <option value="Urdu">Urdu</option>
+        <option value="Vietnamese">Vietnamese</option>
+        <option value="Russian">Русский</option>
+        <option value="Spanish">Español</option>
+        <option value="French">Français</option>
+        <option value="German">Deutsch</option>
+        <option value="Japanese">日本語</option>
+        <option value="Chinese">中文</option>
+      </select>
+    </div>
+    <div>
+      <label>
+        <span data-i18n="cfg_model">Vision/LLM model</span>
+        <span class="help-icon" tabindex="0">?
+          <div class="tooltip">
+            <div data-i18n="cfg_model_help">Multimodal Ollama models...</div>
+          </div>
+        </span>
+      </label>
+      <select id="cfg-model">
+        <option data-i18n="cfg_model_loading">Loading model list...</option>
+      </select>
+    </div>
+    <div>
+      <label data-i18n="cfg_font">Font path</label>
+      <input id="cfg-font" value="arial.ttf" type="hidden">
+      <div class="font-toggle-grid" id="font-toggle-grid">
+        <button type="button" class="font-toggle active" data-font="arial.ttf">Loading fonts...</button>
+      </div>
+    </div>
+    <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
+      <div class="checkbox">
+        <input type="checkbox" id="cfg-debug">
+        <label for="cfg-debug" style="margin:0; font-size:14px;" data-i18n="cfg_debug">Debug boxes on result</label>
+        <span class="help-icon" tabindex="0">?
+          <div class="tooltip">
+            <h4 data-i18n="legend_title">Box colors on result</h4>
+            <div class="legend-row">
+              <div class="swatch" style="border-color: #00c800;"></div>
+              <span class="label" data-i18n="legend_green">Green — text bubble translated successfully</span>
+            </div>
+            <div class="legend-row">
+              <div class="swatch" style="border-color: #0096ff;"></div>
+              <span class="label" data-i18n="legend_blue">Blue — free-floating text (SFX) translated</span>
+            </div>
+            <div class="legend-row">
+              <div class="swatch" style="border-color: #ff8c00;"></div>
+              <span class="label" data-i18n="legend_orange">Orange — OCR found text but translation failed</span>
+            </div>
+            <div class="legend-row">
+              <div class="swatch" style="border-color: #ff0000;"></div>
+              <span class="label" data-i18n="legend_red">Red — OCR returned no text</span>
+            </div>
+          </div>
+        </span>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="cfg-llm-debug">
+        <label for="cfg-llm-debug" style="margin:0; font-size:14px;" data-i18n="cfg_llm_debug">Verbose LLM logging (server console)</label>
+        <span class="help-icon" tabindex="0">?
+          <div class="tooltip">
+            <span data-i18n="cfg_llm_debug_help">When enabled, every prompt sent to the LLM and every response from it is printed to the server console. Useful for diagnosing translation issues. Slows things down and produces a lot of output.</span>
+          </div>
+        </span>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="cfg-fast-mode">
+        <label for="cfg-fast-mode" style="margin:0; font-size:14px;" data-i18n="cfg_fast_mode">Fast mode (no context)</label>
+        <span class="help-icon" tabindex="0">?
+          <div class="tooltip">
+            <span data-i18n="cfg_fast_mode_help">Skip page analysis and speaker attribution. Saves 2-3 vision-LLM calls per page (~30-60 seconds), but bubbles are translated without scene context and the character archive is not updated. Useful for quick drafts.</span>
+          </div>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <div class="progress-wrapper" id="progress-wrap" style="display:none">
+    <div class="progress-meta">
+      <span id="progress-text" data-i18n="progress_preparing">Preparing...</span>
+      <span id="progress-time"></span>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="log" id="log"></div>
+    <div class="export-bar" id="export-bar">
+      <span class="export-hint" data-i18n="export_hint">Download translated chapter:</span>
+      <button id="btn-export-zip" class="btn-secondary" disabled>
+        <span data-i18n="export_zip">📦 Download ZIP</span>
+      </button>
+      <button id="btn-export-cbz" class="btn-secondary" disabled>
+        <span data-i18n="export_cbz">📚 Download CBZ</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="pages-grid" id="pages-grid"></div>
+</div>
+
+<!-- ─── Panel: Editor ─── -->
+<div class="panel" id="panel-editor">
+  <div class="editor-toolbar">
+    <div>
+      <label style="font-size:12px; color:#999;" data-i18n="editor_page">Page:</label>
+      <select id="editor-page-select"></select>
+    </div>
+    <div class="editor-base-font">
+      <label data-i18n="editor_base_font">Base font:</label>
+      <select id="editor-base-font"></select>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn-secondary" id="btn-reload-job" data-i18n="editor_load_job">Load job...</button>
+      <button id="btn-rerender" data-i18n="editor_rerender">💾 Save and re-render</button>
+    </div>
+  </div>
+  <div class="editor-layout">
+    <div class="editor-image" id="editor-image">
+      <div class="empty" data-i18n="editor_empty">Load or select a job to edit</div>
+    </div>
+    <div class="editor-side" id="editor-side">
+      <div class="empty" data-i18n="editor_side_empty">Bubbles will appear here</div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Panel: Characters ─── -->
+<div class="panel" id="panel-characters">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <h2 style="margin:0; font-size:18px;" data-i18n="characters_title">Character archive</h2>
+    <div style="display:flex; gap:8px;">
+      <button class="btn-secondary" id="btn-reload-chars" data-i18n="characters_reload">Reload</button>
+      <button class="btn-danger" id="btn-clear-chars" data-i18n="characters_clear">🗑 Clear all</button>
+      <button id="btn-save-chars" data-i18n="characters_save">💾 Save</button>
+    </div>
+  </div>
+  <div class="characters-list" id="characters-list">
+    <div class="empty" data-i18n="loading">Loading...</div>
+  </div>
+</div>
+
+</main>
+
+<div class="job-modal" id="job-modal" aria-hidden="true">
+  <div class="job-dialog">
+    <header>
+      <h2 data-i18n="job_modal_title">Load local job</h2>
+      <button class="btn-secondary" id="job-modal-close" type="button" data-i18n="job_modal_close">Close</button>
+    </header>
+    <input id="job-search" placeholder="Search by work, chapter, language or job id" data-i18n-placeholder="job_modal_search">
+    <div class="job-list" id="job-list"></div>
+  </div>
+</div>
+
+<script>
+//═════════════════════════════════════════════════════════════════════
+// i18n
+//═════════════════════════════════════════════════════════════════════
+
+const I18N = {
+  en: {
+    app_title:        "MangaTranslate",
+    tab_translate:    "Translate",
+    tab_editor:       "Editor",
+    tab_characters:   "Characters",
+    upload_drop:      "Drop chapter pages here",
+    upload_or_click:  "or click, paste, or drag web images (jpg, png, webp)",
+    upload_tag_multi: "Multiple images",
+    upload_tag_inpaint: "Inpaint render",
+    upload_tag_export: "ZIP / CBZ export",
+    chapter_url_button: "Add chapter URL",
+    chapter_url_prompt: "Paste the chapter page URL",
+    chapter_url_loading: "Reading chapter URL...",
+    chapter_url_found: "Found %1 chapter images. Downloading...",
+    chapter_url_error: "Chapter URL error: %1",
+    render_settings_title: "Rendering settings",
+    render_settings_desc: "Configure OCR and translation models before batch start",
+    cfg_work_title:   "Work",
+    cfg_chapter:      "Chapter",
+    inpaint_enabled:  "Smart inpaint enabled",
+    start_batch:      "Start batch translation",
+    cfg_source_lang:  "Source language",
+    cfg_lang:         "Translation language",
+    cfg_font:         "Font path",
+    cfg_debug:        "Debug boxes on result",
+    cfg_llm_debug:    "Verbose LLM logging (server console)",
+    cfg_llm_debug_help: "When enabled, every prompt sent to the LLM and every response from it is printed to the server console. Useful for diagnosing translation issues. Slows things down and produces a lot of output.",
+    cfg_fast_mode:    "Fast mode (no context)",
+    cfg_fast_mode_help: "Skip page analysis and speaker attribution. Saves 2-3 vision-LLM calls per page (~30-60 seconds), but bubbles are translated without scene context and the character archive is not updated. Useful for quick drafts.",
+    legend_title:     "Box colors on result",
+    legend_green:     "Green — text bubble translated successfully",
+    legend_blue:      "Blue — free-floating text (SFX) translated",
+    legend_orange:    "Orange — OCR found text but translation failed",
+    legend_red:       "Red — OCR returned no text",
+    cfg_model:        "Vision/LLM model",
+    cfg_model_loading: "Loading model list...",
+    cfg_model_none:   "No models found in Ollama",
+    cfg_model_help:   "Multimodal Ollama models, used for character analysis, scene understanding, attribution and translation. Click 'Enter manually...' if your model is not listed.",
+    job_id_label:     "Job ID:",
+    job_id_what_title: "What is Job ID?",
+    job_id_what_desc: "A unique identifier for the current translation job. Use it to reopen this chapter in the Editor tab later — copy the ID and paste it via the \"Load job...\" button. Results stay available on the server as long as you do not clear them manually.",
+    progress_preparing: "Preparing...",
+    editor_page:      "Page:",
+    editor_load_job:  "Load job...",
+    editor_rerender:  "💾 Save and re-render",
+    editor_base_font: "Base font:",
+    editor_font:      "Font:",
+    editor_size:      "Size:",
+    editor_empty:     "Load or select a job to edit",
+    editor_side_empty: "Bubbles will appear here",
+    characters_title: "Character archive",
+    characters_reload: "Reload",
+    characters_save:  "💾 Save",
+    characters_clear: "🗑 Clear all",
+    characters_clear_confirm: "Delete the ENTIRE character archive? This cannot be undone.",
+    loading:          "Loading...",
+    // Stages shown over processing pages
+    stage_detect:     "Detecting bubbles",
+    stage_ocr:        "Reading text (OCR)",
+    stage_analyze:    "Analyzing scene",
+    stage_attribute:  "Identifying speakers",
+    stage_translate:  "Translating",
+    stage_inpaint:    "Inpainting & rendering",
+    stage_queue:      "In queue",
+    sub_pageN:        "Page %1 of %2",
+    // Log/runtime
+    upload_loading:   "Uploading %1 files...",
+    upload_done:      "Job created: %1, pages: %2",
+    upload_error:     "Error: %1",
+    ws_connected:     "WebSocket connected, starting...",
+    ws_error:         "WebSocket error",
+    ws_closed:        "WebSocket closed",
+    starting_n:       "Starting processing of %1 pages...",
+    page_done_log:    "✓ Page %1: %2 bubbles, %3s",
+    done_summary:     "✓ Done: %1/%2, %3",
+    done_errors:      "⚠ Failures: %1",
+    issues_logged:    "Issues recorded: %1",
+    elapsed_label:    "Elapsed:",
+    remaining_label:  "ETA:",
+    finished_label:   "Done!",
+    page_of:          "Page %1 / %2",
+    chars_count:      "%1 bubbles",
+    pick_images:      "Please choose images",
+    prompt_job_id:    "Enter job_id (visible while processing):",
+    job_not_found:    "Could not load: %1",
+    open_page_first:  "Open a page first",
+    rerendering:      "Re-rendering...",
+    rerender_failed:  "Re-render failed: %1",
+    saved_n_chars:    "Saved: %1 characters",
+    delete_char_q:    "Delete character %1?",
+    empty_archive:    "Archive is empty. Run a translation to populate.",
+    no_bubbles:       "No bubbles",
+    no_ocr:           "(empty OCR)",
+    job_modal_title:  "Load local job",
+    job_modal_close:  "Close",
+    job_modal_search: "Search by work, chapter, language or job id",
+    job_modal_empty:  "No local jobs found",
+    job_modal_open:   "Open",
+    job_modal_untitled: "Untitled",
+    job_modal_chapter: "Ch.",
+    export_hint:      "Download translated chapter:",
+    export_zip:       "📦 Download ZIP",
+    export_cbz:       "📚 Download CBZ",
+  },
+  pt: {
+    app_title:        "MangaTranslate",
+    tab_translate:    "Traduzir",
+    tab_editor:       "Editor Visual",
+    tab_characters:   "Personagens",
+    upload_drop:      "Solte as paginas do capitulo aqui",
+    upload_or_click:  "ou clique, cole ou arraste imagens da web (jpg, png, webp)",
+    upload_tag_multi: "Multiplas imagens",
+    upload_tag_inpaint: "Renderizacao inpaint",
+    upload_tag_export: "Exportacao ZIP / CBZ",
+    chapter_url_button: "Adicionar URL do capitulo",
+    chapter_url_prompt: "Cole a URL da pagina do capitulo",
+    chapter_url_loading: "Lendo URL do capitulo...",
+    chapter_url_found: "Encontradas %1 imagens do capitulo. Baixando...",
+    chapter_url_error: "Erro na URL do capitulo: %1",
+    render_settings_title: "Configuracoes de renderizacao",
+    render_settings_desc: "Configure os modelos OCR e tradutores antes do inicio em lote",
+    cfg_work_title:   "Obra",
+    cfg_chapter:      "Capitulo",
+    inpaint_enabled:  "Inpaint inteligente ativado",
+    start_batch:      "Iniciar traducao em lote",
+    cfg_source_lang:  "Idioma de origem",
+    cfg_lang:         "Idioma de destino",
+    cfg_font:         "Caminho da fonte de renderizacao",
+    cfg_debug:        "Caixas de depuracao no resultado",
+    cfg_llm_debug:    "Log do LLM detalhado (console)",
+    cfg_llm_debug_help: "Quando ativado, cada prompt enviado ao LLM e cada resposta recebida aparecem no console do servidor. Use para diagnosticar traducoes.",
+    cfg_fast_mode:    "Modo rapido (sem contexto)",
+    cfg_fast_mode_help: "Ignora analise de pagina e atribuicao de falantes. Ganha velocidade, mas traduz sem contexto da cena.",
+    legend_title:     "Cores das caixas no resultado",
+    legend_green:     "Verde - balao traduzido com sucesso",
+    legend_blue:      "Azul - texto livre/SFX traduzido",
+    legend_orange:    "Laranja - OCR encontrou texto, mas a traducao falhou",
+    legend_red:       "Vermelho - OCR nao retornou texto",
+    cfg_model:        "Modelo Vision / LLM",
+    cfg_model_loading: "Carregando lista de modelos...",
+    cfg_model_none:   "Nenhum modelo encontrado no Ollama",
+    cfg_model_help:   "Modelos multimodais Ollama usados para analise de personagens, cena, atribuicao e traducao.",
+    job_id_label:     "Job ID:",
+    job_id_what_title: "O que e Job ID?",
+    job_id_what_desc: "Identificador unico da traducao atual. Use para reabrir o capitulo depois no Editor Visual.",
+    progress_preparing: "Preparando...",
+    editor_page:      "Pagina:",
+    editor_load_job:  "Carregar job...",
+    editor_rerender:  "Salvar e renderizar",
+    editor_base_font: "Fonte base:",
+    editor_font:      "Fonte:",
+    editor_size:      "Tamanho:",
+    editor_empty:     "Carregue ou selecione um job para editar",
+    editor_side_empty: "Os baloes aparecem aqui",
+    characters_title: "Arquivo de personagens",
+    characters_reload: "Recarregar",
+    characters_save:  "Salvar",
+    characters_clear: "Limpar tudo",
+    characters_clear_confirm: "Excluir TODO o arquivo de personagens? Esta acao nao pode ser desfeita.",
+    loading:          "Carregando...",
+    stage_detect:     "Detectando baloes",
+    stage_ocr:        "Lendo texto (OCR)",
+    stage_analyze:    "Analisando cena",
+    stage_attribute:  "Identificando falantes",
+    stage_translate:  "Traduzindo",
+    stage_inpaint:    "Inpaint e renderizacao",
+    stage_queue:      "Na fila",
+    sub_pageN:        "Pagina %1 de %2",
+    upload_loading:   "Enviando %1 arquivos...",
+    upload_done:      "Job criado: %1, paginas: %2",
+    upload_error:     "Erro: %1",
+    ws_connected:     "WebSocket conectado, iniciando...",
+    ws_error:         "Erro no WebSocket",
+    ws_closed:        "WebSocket fechado",
+    starting_n:       "Iniciando processamento de %1 paginas...",
+    page_done_log:    "Pagina %1: %2 baloes, %3s",
+    done_summary:     "Concluido: %1/%2, %3",
+    done_errors:      "Falhas: %1",
+    issues_logged:    "Problemas registrados: %1",
+    elapsed_label:    "Tempo:",
+    remaining_label:  "ETA:",
+    finished_label:   "Concluido!",
+    page_of:          "Pagina %1 / %2",
+    chars_count:      "%1 baloes",
+    pick_images:      "Escolha as imagens",
+    prompt_job_id:    "Digite o job_id:",
+    job_not_found:    "Nao foi possivel carregar: %1",
+    open_page_first:  "Abra uma pagina primeiro",
+    rerendering:      "Renderizando novamente...",
+    rerender_failed:  "Falha ao renderizar: %1",
+    saved_n_chars:    "Salvo: %1 personagens",
+    delete_char_q:    "Excluir personagem %1?",
+    empty_archive:    "Arquivo vazio. Rode uma traducao para preencher.",
+    no_bubbles:       "Sem baloes",
+    no_ocr:           "(OCR vazio)",
+    job_modal_title:  "Carregar job local",
+    job_modal_close:  "Fechar",
+    job_modal_search: "Buscar por obra, capitulo, idioma ou job id",
+    job_modal_empty:  "Nenhum job local encontrado",
+    job_modal_open:   "Abrir",
+    job_modal_untitled: "Sem titulo",
+    job_modal_chapter: "Cap.",
+    export_hint:      "Baixar capitulo traduzido:",
+    export_zip:       "Baixar ZIP",
+    export_cbz:       "Baixar CBZ",
+  },
+  ru: {
+    app_title:        "BTA MangaTranslate",
+    tab_translate:    "Перевод",
+    tab_editor:       "Редактор",
+    tab_characters:   "Персонажи",
+    upload_drop:      "Перетащите страницы главы сюда",
+    upload_or_click:  "или нажмите чтобы выбрать файлы (jpg, png, webp)",
+    cfg_lang:         "Язык перевода",
+    cfg_font:         "Путь к шрифту",
+    cfg_debug:        "Дебаг-рамки на результате",
+    cfg_llm_debug:    "Подробный лог LLM (в консоли сервера)",
+    cfg_llm_debug_help: "Когда включено, каждый запрос к LLM и каждый ответ от неё печатаются в консоль сервера. Полезно для диагностики проблем с переводом. Замедляет работу и производит много вывода.",
+    cfg_fast_mode:    "Быстрый режим (без контекста)",
+    cfg_fast_mode_help: "Пропускает анализ страницы и определение спикеров. Экономит 2-3 vision-вызова на страницу (≈30-60 секунд), но баблы переводятся без контекста сцены, и архив персонажей не обновляется. Полезно для быстрых черновых переводов.",
+    legend_title:     "Цвета рамок на результате",
+    legend_green:     "Зелёный — бабл переведён успешно",
+    legend_blue:      "Синий — текст вне бабла (SFX) переведён",
+    legend_orange:    "Оранжевый — OCR нашёл текст, но перевод не удался",
+    legend_red:       "Красный — OCR не вернул текста",
+    cfg_model:        "Vision/LLM модель",
+    cfg_model_loading: "Загружаем список моделей...",
+    cfg_model_none:   "Модели в Ollama не найдены",
+    cfg_model_help:   "Мультимодальные модели Ollama для анализа персонажей, сцены, атрибуции и перевода. Если нужной модели нет в списке — нажмите «Ввести вручную...».",
+    job_id_label:     "Job ID:",
+    job_id_what_title: "Что такое Job ID?",
+    job_id_what_desc: "Уникальный идентификатор текущего перевода. Используется чтобы потом открыть главу заново на вкладке «Редактор» — скопируйте ID и вставьте через кнопку «Загрузить джоб...». Результаты на сервере хранятся пока вы их вручную не очистите.",
+    progress_preparing: "Готовится...",
+    editor_page:      "Страница:",
+    editor_load_job:  "Загрузить джоб...",
+    editor_rerender:  "💾 Сохранить и перерисовать",
+    editor_font:      "Шрифт:",
+    editor_size:      "Размер:",
+    editor_empty:     "Загрузите или выберите джоб для редактирования",
+    editor_side_empty: "Баблы появятся здесь",
+    characters_title: "Архив персонажей",
+    characters_reload: "Обновить",
+    characters_save:  "💾 Сохранить",
+    characters_clear: "🗑 Очистить всё",
+    characters_clear_confirm: "Удалить ВЕСЬ архив персонажей? Это действие необратимо.",
+    loading:          "Загрузка...",
+    stage_detect:     "Поиск баблов",
+    stage_ocr:        "Распознавание текста (OCR)",
+    stage_analyze:    "Анализ сцены",
+    stage_attribute:  "Определение говорящих",
+    stage_translate:  "Перевод",
+    stage_inpaint:    "Инпейтинг и отрисовка",
+    stage_queue:      "В очереди",
+    sub_pageN:        "Страница %1 из %2",
+    upload_loading:   "Загружаем %1 файлов...",
+    upload_done:      "Job создан: %1, страниц: %2",
+    upload_error:     "Ошибка: %1",
+    ws_connected:     "WebSocket подключён, запускаем...",
+    ws_error:         "WebSocket ошибка",
+    ws_closed:        "WebSocket закрыт",
+    starting_n:       "Начинаем обработку %1 страниц...",
+    page_done_log:    "✓ Страница %1: %2 баблов, %3с",
+    done_summary:     "✓ Готово: %1/%2, %3",
+    done_errors:      "⚠ Ошибок: %1",
+    issues_logged:    "Зафиксировано проблем: %1",
+    elapsed_label:    "Прошло:",
+    remaining_label:  "Осталось ≈",
+    finished_label:   "Готово!",
+    page_of:          "Страница %1 / %2",
+    chars_count:      "%1 баблов",
+    pick_images:      "Выберите изображения",
+    prompt_job_id:    "Введите job_id (виден во время обработки):",
+    job_not_found:    "Не удалось загрузить: %1",
+    open_page_first:  "Откройте страницу",
+    rerendering:      "Перерисовка...",
+    rerender_failed:  "Не удалось перерисовать: %1",
+    saved_n_chars:    "Сохранено: %1 персонажей",
+    delete_char_q:    "Удалить персонажа %1?",
+    empty_archive:    "Архив пуст. Запустите перевод, чтобы заполнить.",
+    no_bubbles:       "Баблов нет",
+    no_ocr:           "(пустой OCR)",
+    export_hint:      "Скачать переведённую главу:",
+    export_zip:       "📦 Скачать ZIP",
+    export_cbz:       "📚 Скачать CBZ",
+  },
+};
+
+let LANG = localStorage.getItem("lang") || "pt";
+const UI_LANGUAGE_FALLBACK = {
+  es: "en",
+  fr: "en",
+  ja: "en",
+  ko: "en",
+  id: "en",
+};
+
+function t(key, ...args) {
+  const pack = I18N[LANG] || I18N[UI_LANGUAGE_FALLBACK[LANG]] || I18N.en;
+  let s = (pack && pack[key]) || I18N.en[key] || key;
+  args.forEach((v, i) => { s = s.replace(`%${i + 1}`, v); });
+  return s;
+}
+
+function applyI18n() {
+  document.documentElement.lang = LANG;
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach(el => {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  });
+  const select = document.getElementById("ui-lang-select");
+  if (select) select.value = LANG;
+}
+
+document.querySelectorAll(".lang-btn").forEach(btn => {
+  btn.onclick = () => {
+    LANG = btn.dataset.lang;
+    localStorage.setItem("lang", LANG);
+    applyI18n();
+    // Re-render dynamic content where it matters
+    if (currentEditPage) openEditPage(currentEditPage.page);
+    if (Object.keys(charactersData).length) renderCharacters();
+    if ($('job-modal')?.classList.contains('open')) renderJobList();
+    if ($('cfg-model').options.length) loadModels();
+  };
+});
+
+const uiLangSelect = document.getElementById("ui-lang-select");
+if (uiLangSelect) {
+  uiLangSelect.onchange = () => {
+    LANG = uiLangSelect.value;
+    localStorage.setItem("lang", LANG);
+    applyI18n();
+    if (currentEditPage) openEditPage(currentEditPage.page);
+    if (Object.keys(charactersData).length) renderCharacters();
+    if ($('cfg-model')?.options.length) loadModels();
+  };
+}
+
+//═════════════════════════════════════════════════════════════════════
+// state
+//═════════════════════════════════════════════════════════════════════
+
+let currentJobId = null;
+let currentJobPages = [];
+let currentEditPage = null;
+let ws = null;
+let startTime = null;
+let totalPagesGlobal = 0;
+let uploadedJobReady = false;
+let localJobs = [];
+let availableFonts = [];
+// Map page idx → card element while processing
+const processingCards = {};
+
+const $ = id => document.getElementById(id);
+
+function placeRenderSettingsInSidebar() {
+  const slot = $('sidebar-config-slot');
+  const config = document.querySelector('#panel-translate > .config');
+  if (slot && config && config.parentElement !== slot) {
+    slot.appendChild(config);
+  }
+}
+
+function selectRenderFont(fontPath, notify = true) {
+  const input = $('cfg-font');
+  if (!input || !fontPath) return;
+  input.value = fontPath;
+  document.querySelectorAll('.font-toggle').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.font === fontPath);
+  });
+  if (notify) {
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+}
+
+function wireFontToggles() {
+  document.querySelectorAll('.font-toggle').forEach(btn => {
+    btn.onclick = () => selectRenderFont(btn.dataset.font);
+  });
+  selectRenderFont($('cfg-font')?.value || 'arial.ttf', false);
+}
+
+function fontLabelForPath(path) {
+  const value = String(path || '');
+  if (!value) return '(default)';
+  const lower = value.toLowerCase();
+  const found = availableFonts.find(font =>
+    font.path === value ||
+    (font.file || '').toLowerCase() === lower ||
+    (font.path || '').toLowerCase() === lower
+  );
+  return found?.label || found?.file || value.split(/[\\/]/).pop() || value;
+}
+
+function populateEditorBaseFontSelect() {
+  const select = $('editor-base-font');
+  if (!select) return;
+  const fonts = availableFonts.length ? availableFonts : [
+    { label: "Arial", path: "arial.ttf" },
+    { label: "Arial Bold", path: "arialbd.ttf" },
+  ];
+  const selected = select.value || $('cfg-font')?.value || fonts[0]?.path || '';
+  select.innerHTML = fonts.map(font => `
+    <option value="${escapeHtml(font.path)}">${escapeHtml(font.label || font.file || font.path)}</option>
+  `).join('');
+  select.value = fonts.some(font => font.path === selected) ? selected : (fonts[0]?.path || '');
+}
+
+function setBubbleFont(idx, fontPath) {
+  const input = document.querySelector(`.bubble-font-input[data-idx="${idx}"]`);
+  if (!input) return;
+  input.value = fontPath || '';
+  document.querySelectorAll(`.bubble-font-toggle[data-bubble-font="${idx}"]`).forEach(btn => {
+    btn.classList.toggle('active', (btn.dataset.font || '') === input.value);
+  });
+  const bubble = currentEditPage?.bubbles?.find(item => Number(item.idx) === Number(idx));
+  if (bubble) bubble.font_path = input.value || null;
+}
+
+function renderBubbleFontToggles(idx, selectedFont) {
+  const fonts = availableFonts.length ? availableFonts : [
+    { label: "Default", path: "" },
+    { label: "Arial", path: "arial.ttf" },
+    { label: "Arial Bold", path: "arialbd.ttf" },
+  ];
+  const items = [{ label: "(default)", path: "" }, ...fonts];
+  return `
+    <div class="bubble-font-toggles">
+      ${items.map(font => `
+        <button type="button"
+                class="bubble-font-toggle ${(font.path || '') === (selectedFont || '') ? 'active' : ''}"
+                data-bubble-font="${idx}"
+                data-font="${escapeHtml(font.path || '')}"
+                title="${escapeHtml(font.file || font.path || '')}">
+          ${escapeHtml(font.label || font.file || font.path || '(default)')}
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function applyBaseFontToBubbles(fontPath) {
+  if (!fontPath || !currentJobPages.length) return;
+  currentJobPages.forEach(page => {
+    (page.bubbles || []).forEach(bubble => {
+      bubble.font_path = fontPath;
+    });
+  });
+  if (currentEditPage) {
+    openEditPage(currentEditPage.page);
+  }
+}
+
+async function loadInstalledFonts() {
+  const grid = $('font-toggle-grid');
+  const input = $('cfg-font');
+  if (!grid || !input) return;
+  const selected = input.value || 'arial.ttf';
+  try {
+    const response = await fetch('/api/fonts');
+    if (!response.ok) throw new Error('fonts request failed');
+    const data = await response.json();
+    const fonts = Array.isArray(data.fonts) ? data.fonts : [];
+    if (!fonts.length) throw new Error('no fonts found');
+    availableFonts = fonts;
+    grid.innerHTML = fonts.map(font => `
+      <button type="button" class="font-toggle" title="${escapeHtml(font.file || font.path)}" data-font="${escapeHtml(font.path)}">
+        ${escapeHtml(font.label || font.file || font.path)}
+      </button>
+    `).join('');
+    const selectedLower = selected.toLowerCase();
+    const selectedFont = fonts.find(font =>
+      font.path === selected ||
+      (font.file || '').toLowerCase() === selectedLower ||
+      font.path.toLowerCase().endsWith('/' + selectedLower) ||
+      font.path.toLowerCase().endsWith('\\' + selectedLower)
+    );
+    selectRenderFont(selectedFont ? selectedFont.path : (data.default || fonts[0].path), false);
+    wireFontToggles();
+    populateEditorBaseFontSelect();
+  } catch (error) {
+    availableFonts = [
+      { label: "Arial", path: "arial.ttf", file: "arial.ttf" },
+      { label: "Arial Bold", path: "arialbd.ttf", file: "arialbd.ttf" },
+      { label: "Calibri Bold", path: "calibrib.ttf", file: "calibrib.ttf" },
+      { label: "Verdana Bold", path: "verdanab.ttf", file: "verdanab.ttf" },
+    ];
+    grid.innerHTML = `
+      <button type="button" class="font-toggle active" data-font="arial.ttf">Arial</button>
+      <button type="button" class="font-toggle" data-font="arialbd.ttf">Arial Bold</button>
+      <button type="button" class="font-toggle" data-font="calibrib.ttf">Calibri Bold</button>
+      <button type="button" class="font-toggle" data-font="verdanab.ttf">Verdana Bold</button>
+    `;
+    selectRenderFont(selected, false);
+    wireFontToggles();
+    populateEditorBaseFontSelect();
+  }
+}
+
+const LANGUAGE_OPTIONS = [
+  ["Afrikaans", "Afrikaans"],
+  ["Albanian", "Albanian"],
+  ["Amharic", "Amharic"],
+  ["Arabic", "Arabic"],
+  ["Armenian", "Armenian"],
+  ["Azerbaijani", "Azerbaijani"],
+  ["Basque", "Basque"],
+  ["Bengali", "Bengali"],
+  ["Bosnian", "Bosnian"],
+  ["Bulgarian", "Bulgarian"],
+  ["Catalan", "Catalan"],
+  ["Chinese", "Chinese"],
+  ["Chinese (Simplified)", "Chinese (Simplified)"],
+  ["Chinese (Traditional)", "Chinese (Traditional)"],
+  ["Croatian", "Croatian"],
+  ["Czech", "Czech"],
+  ["Danish", "Danish"],
+  ["Dutch", "Dutch"],
+  ["English", "English"],
+  ["Estonian", "Estonian"],
+  ["Filipino", "Filipino"],
+  ["Finnish", "Finnish"],
+  ["French", "French"],
+  ["Georgian", "Georgian"],
+  ["German", "German"],
+  ["Greek", "Greek"],
+  ["Gujarati", "Gujarati"],
+  ["Hausa", "Hausa"],
+  ["Hebrew", "Hebrew"],
+  ["Hindi", "Hindi"],
+  ["Hungarian", "Hungarian"],
+  ["Icelandic", "Icelandic"],
+  ["Indonesian", "Indonesian"],
+  ["Irish", "Irish"],
+  ["Italian", "Italian"],
+  ["Japanese", "Japanese"],
+  ["Kannada", "Kannada"],
+  ["Kazakh", "Kazakh"],
+  ["Khmer", "Khmer"],
+  ["Korean", "Korean"],
+  ["Lao", "Lao"],
+  ["Latin", "Latin"],
+  ["Latvian", "Latvian"],
+  ["Lithuanian", "Lithuanian"],
+  ["Macedonian", "Macedonian"],
+  ["Malay", "Malay"],
+  ["Marathi", "Marathi"],
+  ["Mongolian", "Mongolian"],
+  ["Nepali", "Nepali"],
+  ["Norwegian", "Norwegian"],
+  ["Pashto", "Pashto"],
+  ["Persian", "Persian"],
+  ["Polish", "Polish"],
+  ["Portuguese", "Portuguese"],
+  ["Portuguese (Brazil)", "Portuguese (Brazil)"],
+  ["Romanian", "Romanian"],
+  ["Russian", "Russian"],
+  ["Serbian", "Serbian"],
+  ["Slovak", "Slovak"],
+  ["Slovenian", "Slovenian"],
+  ["Spanish", "Spanish"],
+  ["Swahili", "Swahili"],
+  ["Swedish", "Swedish"],
+  ["Tamil", "Tamil"],
+  ["Telugu", "Telugu"],
+  ["Thai", "Thai"],
+  ["Turkish", "Turkish"],
+  ["Ukrainian", "Ukrainian"],
+  ["Urdu", "Urdu"],
+  ["Vietnamese", "Vietnamese"],
+  ["Welsh", "Welsh"],
+  ["Yoruba", "Yoruba"],
+  ["Zulu", "Zulu"],
+];
+
+function ensureLanguageOptions(selectId, includeAuto = false) {
+  const select = $(selectId);
+  if (!select) return;
+
+  const seen = new Set(Array.from(select.options).map(option => option.value));
+  if (includeAuto && !seen.has("Auto")) {
+    const option = document.createElement("option");
+    option.value = "Auto";
+    option.textContent = "Auto detect";
+    select.insertBefore(option, select.firstChild);
+    seen.add("Auto");
+  }
+
+  for (const [value, label] of LANGUAGE_OPTIONS) {
+    if (seen.has(value)) continue;
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.appendChild(option);
+    seen.add(value);
+  }
+}
+
+const LANG_CODE_LABELS = {
+  "Auto": "AUTO",
+  "Portuguese (Brazil)": "PT-BR",
+  "Portuguese": "PT-PT",
+  "English": "EN-US",
+  "Spanish": "ES-ES",
+  "French": "FR-FR",
+  "German": "DE-DE",
+  "Japanese": "JA-JP",
+  "Korean": "KO-KR",
+  "Chinese": "ZH-CN",
+  "Chinese (Simplified)": "ZH-CN",
+  "Chinese (Traditional)": "ZH-TW",
+  "Russian": "RU-RU",
+  "Italian": "IT-IT",
+  "Arabic": "AR-SA",
+  "Hindi": "HI-IN",
+  "Indonesian": "ID-ID",
+  "Vietnamese": "VI-VN",
+  "Thai": "TH-TH",
+  "Turkish": "TR-TR",
+  "Polish": "PL-PL",
+  "Ukrainian": "UK-UA",
+  "Dutch": "NL-NL",
+  "Swedish": "SV-SE",
+};
+
+function languageCode(value) {
+  return LANG_CODE_LABELS[value] || String(value || "").slice(0, 2).toUpperCase();
+}
+
+function applyLanguageCodeLabels() {
+  ["cfg-source-lang", "cfg-lang"].forEach((id) => {
+    const select = $(id);
+    if (!select) return;
+    Array.from(select.options).forEach((option) => {
+      option.textContent = languageCode(option.value);
+      option.title = option.value;
+    });
+  });
+}
+
+function setSelectByLanguageCode(selectId, code) {
+  const select = $(selectId);
+  const wanted = String(code || "").toUpperCase();
+  if (!select || !wanted) return;
+  const option = Array.from(select.options).find(item => languageCode(item.value).toUpperCase() === wanted);
+  if (option) select.value = option.value;
+}
+
+//═════════════════════════════════════════════════════════════════════
+// tabs
+//═════════════════════════════════════════════════════════════════════
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    $('panel-' + tab.dataset.panel).classList.add('active');
+    if (tab.dataset.panel === 'characters') loadCharacters();
+  };
+});
+
+//═════════════════════════════════════════════════════════════════════
+// upload
+//═════════════════════════════════════════════════════════════════════
+
+const uploadZone = $('upload-zone');
+const fileInput = $('file-input');
+const startUploadButton = $('btn-start-upload');
+const chapterUrlButton = $('btn-chapter-url');
+const SUPPORTED_UPLOAD_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff'];
+
+uploadZone.onclick = (event) => {
+  if (event.target?.closest?.('button')) return;
+  fileInput.click();
+};
+if (startUploadButton) startUploadButton.onclick = () => {
+  if (uploadedJobReady && currentJobId) startCurrentJob();
+  else fileInput.click();
+};
+if (chapterUrlButton) chapterUrlButton.onclick = (event) => {
+  event.stopPropagation();
+  importChapterFromUrl();
+};
+['dragover', 'dragenter'].forEach(ev => uploadZone.addEventListener(ev, e => {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  uploadZone.classList.add('drag');
+}));
+['dragleave', 'drop'].forEach(ev => uploadZone.addEventListener(ev, e => {
+  e.preventDefault(); uploadZone.classList.remove('drag');
+}));
+uploadZone.addEventListener('drop', async e => {
+  e.preventDefault();
+  const files = await filesFromDataTransfer(e.dataTransfer);
+  startUpload(files);
+});
+fileInput.onchange = () => startUpload(Array.from(fileInput.files));
+
+document.addEventListener('paste', async event => {
+  const target = event.target;
+  if (target && target.closest && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+  const files = await filesFromClipboard(event.clipboardData);
+  if (!files.length) return;
+  event.preventDefault();
+  document.querySelector('.tab[data-panel="translate"]')?.click();
+  startUpload(files);
+});
+
+function isSupportedUploadFile(file) {
+  if (!file) return false;
+  const name = (file.name || '').toLowerCase();
+  return file.type.startsWith('image/') || SUPPORTED_UPLOAD_EXTENSIONS.some(ext => name.endsWith(ext));
+}
+
+function imageUrlsFromHtml(html) {
+  if (!html) return [];
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return Array.from(doc.querySelectorAll('img, source'))
+    .map(el => el.currentSrc || el.src || el.getAttribute('srcset') || '')
+    .flatMap(value => String(value).split(',').map(part => part.trim().split(/\s+/)[0]))
+    .filter(Boolean);
+}
+
+function imageUrlsFromText(text) {
+  const matches = String(text || '').match(/https?:\/\/[^\s"'<>]+/gi) || [];
+  return matches.filter(url => /\.(jpe?g|png|webp|bmp|tiff?)(\?|#|$)/i.test(url));
+}
+
+function getDataTransferString(item) {
+  return new Promise(resolve => item.getAsString(value => resolve(value || '')));
+}
+
+async function remoteImageToFile(url, index = 0, namePrefix = 'web-image') {
+  const response = await fetch('/api/fetch-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const blob = await response.blob();
+  const headerName = response.headers.get('X-BTA-Filename') || '';
+  const urlName = decodeURIComponent((new URL(url)).pathname.split('/').pop() || '');
+  const ext = (headerName.match(/\.[a-z0-9]+$/i) || urlName.match(/\.[a-z0-9]+$/i) || ['.png'])[0];
+  const padded = String(index + 1).padStart(3, '0');
+  const baseName = (urlName || `${namePrefix}-${padded}${ext}`).replace(/[^\w.\-]+/g, '_');
+  const filename = `${padded}_${baseName.includes('.') ? baseName : `${baseName}${ext}`}`;
+  return new File([blob], filename, { type: blob.type || 'image/png' });
+}
+
+function humanizeChapterSegment(value) {
+  return String(value || '')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function inferChapterInfoFromUrl(url, pageTitle = '') {
+  let title = '';
+  let chapter = '';
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split('/').map(s => decodeURIComponent(s)).filter(Boolean);
+    const fullText = `${pageTitle} ${segments.join(' ')}`;
+    const chapterMatch = fullText.match(/(?:chapter|capitulo|capítulo|cap|ch|epis[oó]dio|episode)[\s._-]*(\d+(?:\.\d+)?)/i)
+      || fullText.match(/(?:^|[\s/_-])(\d{1,5}(?:\.\d+)?)(?:$|[\s/_-])/);
+    if (chapterMatch) chapter = chapterMatch[1];
+
+    const chapterIndex = segments.findIndex(segment =>
+      /(?:chapter|capitulo|capítulo|cap|ch|epis[oó]dio|episode)[\s._-]*\d+/i.test(segment)
+      || (chapter && segment.includes(chapter))
+    );
+    const titleSegment = chapterIndex > 0 ? segments[chapterIndex - 1] : segments.find(segment =>
+      !/(?:read|manga|comic|chapter|capitulo|capítulo|cap|ch|page|viewer|reader)/i.test(segment)
+    );
+    title = humanizeChapterSegment(titleSegment || '');
+    if (/^(Manga|Manhwa|Manhua|Comic|Comics|Read|Reader|Viewer)$/i.test(title)) {
+      const chapterSegment = chapterIndex >= 0 ? (segments[chapterIndex] || '') : '';
+      const stripped = chapterSegment
+        .replace(/(?:^|[-_\s])(?:chapter|capitulo|capÃ­tulo|cap|ch|epis[oÃ³]dio|episode)[-_\s]*\d+(?:\.\d+)?(?:$|[-_\s].*)/i, '')
+        .replace(chapter ? new RegExp(`[-_\\s]*${chapter.replace('.', '\\.')}[-_\\s]*$`) : /$a/, '');
+      title = humanizeChapterSegment(stripped || segments.find(segment =>
+        !/^(?:read|manga|manhwa|manhua|comic|comics|chapter|capitulo|capÃ­tulo|cap|ch|page|viewer|reader|series|novel|webtoon)$/i.test(segment) &&
+        !/(?:chapter|capitulo|capÃ­tulo|cap|ch|epis[oÃ³]dio|episode)[\s._-]*\d+/i.test(segment)
+      ) || '');
+    }
+    if (!title && pageTitle) {
+      title = humanizeChapterSegment(pageTitle.split(/[-|–—]/)[0]);
+    }
+  } catch {
+    title = humanizeChapterSegment(pageTitle.split(/[-|–—]/)[0]);
+  }
+  return { title, chapter };
+}
+
+function applyChapterInfoFromUrl(url, pageTitle = '') {
+  const info = inferChapterInfoFromUrl(url, pageTitle);
+  if (info.title && $('cfg-work-title')) {
+    $('cfg-work-title').value = info.title;
+  }
+  if (info.chapter && $('cfg-chapter-number')) {
+    $('cfg-chapter-number').value = info.chapter;
+  }
+  saveConfig();
+}
+
+async function importChapterFromUrl() {
+  const url = prompt(t("chapter_url_prompt"));
+  if (!url) return;
+  const btn = chapterUrlButton;
+  const previousText = btn?.textContent || '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = t("chapter_url_loading");
+  }
+  try {
+    log(t("chapter_url_loading"));
+    const response = await fetch('/api/chapter-images', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    const urls = data.images || [];
+    if (!urls.length) throw new Error('No images found');
+    applyChapterInfoFromUrl(url, data.title || '');
+    log(t("chapter_url_found", urls.length), 'ok');
+    const files = [];
+    for (let i = 0; i < urls.length; i += 1) {
+      files.push(await remoteImageToFile(urls[i], i, 'chapter-page'));
+    }
+    await startUpload(files, { autoStart: false });
+  } catch (err) {
+    log(t("chapter_url_error", err.message || err), 'err');
+    alert(t("chapter_url_error", err.message || err));
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = previousText || t("chapter_url_button");
+    }
+  }
+}
+
+async function filesFromDataTransfer(dataTransfer) {
+  const files = Array.from(dataTransfer?.files || []).filter(isSupportedUploadFile);
+  const urls = new Set();
+  const items = Array.from(dataTransfer?.items || []);
+  for (const item of items) {
+    if (item.kind !== 'string') continue;
+    const value = await getDataTransferString(item);
+    if (item.type === 'text/html') imageUrlsFromHtml(value).forEach(url => urls.add(url));
+    else imageUrlsFromText(value).forEach(url => urls.add(url));
+  }
+  const uriList = dataTransfer?.getData?.('text/uri-list') || '';
+  imageUrlsFromText(uriList).forEach(url => urls.add(url));
+  const text = dataTransfer?.getData?.('text/plain') || '';
+  imageUrlsFromText(text).forEach(url => urls.add(url));
+  for (const url of urls) {
+    try {
+      files.push(await remoteImageToFile(url, files.length));
+    } catch (err) {
+      log(`Web image skipped: ${url}`, 'err');
+    }
+  }
+  return files;
+}
+
+async function filesFromClipboard(clipboardData) {
+  const files = [];
+  const urls = new Set();
+  for (const item of Array.from(clipboardData?.items || [])) {
+    if (item.kind === 'file') {
+      const file = item.getAsFile();
+      if (isSupportedUploadFile(file)) files.push(file);
+    } else if (item.kind === 'string') {
+      const value = await getDataTransferString(item);
+      if (item.type === 'text/html') imageUrlsFromHtml(value).forEach(url => urls.add(url));
+      else imageUrlsFromText(value).forEach(url => urls.add(url));
+    }
+  }
+  for (const url of urls) {
+    try {
+      files.push(await remoteImageToFile(url, files.length));
+    } catch (err) {
+      log(`Pasted web image skipped: ${url}`, 'err');
+    }
+  }
+  return files;
+}
+
+async function startUpload(files, options = {}) {
+  files = files.filter(isSupportedUploadFile);
+  if (!files.length) { alert(t("pick_images")); return; }
+
+  // Natural sort by filename: page2 < page10 (the same logic as the backend uses)
+  files.sort((a, b) => naturalCompare(a.name, b.name));
+
+  // Pre-create skeleton cards immediately so user sees progress
+  $('pages-grid').innerHTML = '';
+  for (const key of Object.keys(processingCards)) delete processingCards[key];
+  currentJobPages = [];   // reset stale data from previous run
+  currentEditPage = null;
+  // Export buttons are disabled until the job finishes
+  $('btn-export-zip').disabled = true;
+  $('btn-export-cbz').disabled = true;
+
+  // Read each file as data-URL for the blurred preview underneath the spinner
+  const previews = await Promise.all(files.map(readFileAsDataURL));
+  totalPagesGlobal = files.length;
+  files.forEach((file, idx) => {
+    const card = makeSkeletonCard(idx + 1, files.length, previews[idx], file.name);
+    processingCards[idx + 1] = card;
+    $('pages-grid').appendChild(card);
+  });
+
+  const form = new FormData();
+  for (const f of files) form.append('files', f);
+  form.append('source_lang', $('cfg-source-lang')?.value || 'Auto');
+  form.append('target_lang', $('cfg-lang').value);
+  form.append('font_path', $('cfg-font').value);
+  form.append('debug', $('cfg-debug').checked ? 'true' : 'false');
+  form.append('llm_model', $('cfg-model').value || '');
+  form.append('llm_debug', $('cfg-llm-debug').checked ? 'true' : 'false');
+  form.append('fast_mode', $('cfg-fast-mode').checked ? 'true' : 'false');
+  form.append('work_title', $('cfg-work-title')?.value || '');
+  form.append('chapter_number', $('cfg-chapter-number')?.value || '');
+  form.append('source_lang_code', languageCode($('cfg-source-lang')?.value || 'Auto'));
+  form.append('target_lang_code', languageCode($('cfg-lang')?.value || 'Portuguese (Brazil)'));
+
+  log(t("upload_loading", files.length));
+  $('progress-wrap').style.display = 'block';
+
+  try {
+    const r = await fetch('/api/upload', { method: 'POST', body: form });
+    if (!r.ok) throw new Error('Upload failed');
+    const data = await r.json();
+    currentJobId = data.job_id;
+    uploadedJobReady = true;
+    $('job-id-display').textContent = data.job_id;
+    $('job-id-pill').classList.add('visible');
+    log(t("upload_done", data.job_id, data.total_pages), 'ok');
+    $('progress-text').textContent = t("progress_preparing");
+    if (startUploadButton) startUploadButton.disabled = false;
+    await refreshJobsList();
+    if (options.autoStart) startCurrentJob();
+  } catch (e) {
+    log(t("upload_error", e.message), 'err');
+  }
+}
+
+function startCurrentJob() {
+  if (!currentJobId || !uploadedJobReady) return;
+  uploadedJobReady = false;
+  if (startUploadButton) startUploadButton.disabled = true;
+  openWebSocket(currentJobId, totalPagesGlobal);
+}
+
+function readFileAsDataURL(file) {
+  return new Promise(resolve => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => resolve(null);
+    r.readAsDataURL(file);
+  });
+}
+
+function makeSkeletonCard(pageNum, total, previewSrc, filename) {
+  const card = document.createElement('div');
+  card.className = 'page-card processing';
+  card.dataset.page = pageNum;
+
+  const img = document.createElement('img');
+  if (previewSrc) {
+    img.src = previewSrc;
+  } else {
+    img.classList.add('placeholder');
+  }
+  card.appendChild(img);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'skeleton-overlay';
+  overlay.innerHTML = `
+    <div class="spinner"></div>
+    <div class="skeleton-stage">
+      <span class="stage-label">${t("stage_queue")}</span>
+      <span class="substep">${t("sub_pageN", pageNum, total)}</span>
+    </div>
+  `;
+  card.appendChild(overlay);
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.innerHTML = `<span>${escapeHtml(filename)}</span><span>—</span>`;
+  card.appendChild(meta);
+
+  return card;
+}
+
+function setCardStage(pageNum, stageKey) {
+  const card = processingCards[pageNum];
+  if (!card) return;
+  const label = card.querySelector('.stage-label');
+  if (label) label.textContent = t(stageKey);
+}
+
+//═════════════════════════════════════════════════════════════════════
+// WebSocket progress
+//═════════════════════════════════════════════════════════════════════
+
+function openWebSocket(jobId, total) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
+  ws.onopen = () => {
+    log(t("ws_connected"));
+    ws.send(JSON.stringify({ action: 'start' }));
+    startTime = Date.now();
+    // First page moves from "in queue" to "detecting"
+    setCardStage(1, "stage_detect");
+  };
+  ws.onmessage = ev => handleEvent(JSON.parse(ev.data), total);
+  ws.onerror = () => log(t("ws_error"), 'err');
+  ws.onclose = () => log(t("ws_closed"));
+}
+
+function handleEvent(evt, total) {
+  if (evt.type === 'start') {
+    log(t("starting_n", evt.total), 'ok');
+  } else if (evt.type === 'stage') {
+    // Optional stage update sent from backend, see web.py
+    setCardStage(evt.page, evt.stage_key);
+  } else if (evt.type === 'page_done') {
+    const pct = Math.round(evt.page / total * 100);
+    $('progress-fill').style.width = pct + '%';
+    $('progress-text').textContent = t("page_of", evt.page, total);
+    const elapsed = (Date.now() - startTime) / 1000;
+    const remaining = (elapsed / evt.page) * (total - evt.page);
+    $('progress-time').textContent =
+      `${t("elapsed_label")} ${fmtTime(elapsed)}  •  ${t("remaining_label")} ${fmtTime(remaining)}`;
+    log(t("page_done_log", evt.page, evt.bubbles.length, evt.elapsed.toFixed(1)), 'ok');
+
+    // Cache page data locally so editor can open it without a server round-trip
+    // (avoids races where the JSON file isn't yet flushed when user clicks).
+    const existingIdx = currentJobPages.findIndex(p => p.page === evt.page);
+    const pageRecord = {
+      page: evt.page, filename: evt.filename, url: evt.url,
+      elapsed: evt.elapsed, bubbles: evt.bubbles,
+    };
+    if (existingIdx >= 0) currentJobPages[existingIdx] = pageRecord;
+    else currentJobPages.push(pageRecord);
+    currentJobPages.sort((a, b) => a.page - b.page);
+
+    replaceCardWithResult(evt);
+    // Activate next card as "detecting"
+    if (processingCards[evt.page + 1]) setCardStage(evt.page + 1, "stage_detect");
+  } else if (evt.type === 'finish') {
+    $('progress-fill').style.width = '100%';
+    $('progress-text').textContent = t("finished_label");
+    log(t("done_summary", evt.stats.processed, evt.stats.total_pages,
+          fmtTime(evt.stats.total_seconds)), 'ok');
+    if (evt.stats.failed) log(t("done_errors", evt.stats.failed), 'warn');
+    const issueCount = Object.values(evt.stats.errors || {}).reduce((a, b) => a + b, 0);
+    if (issueCount) log(t("issues_logged", issueCount), 'warn');
+    // Enable export only when there is at least one processed page
+    if (evt.stats.processed > 0) {
+      $('btn-export-zip').disabled = false;
+      $('btn-export-cbz').disabled = false;
+    }
+    if (startUploadButton) startUploadButton.disabled = false;
+    refreshJobsList();
+  } else if (evt.type === 'error') {
+    log(`Error: ${evt.message}`, 'err');
+  }
+}
+
+function replaceCardWithResult(page) {
+  const card = processingCards[page.page];
+  if (!card) return;
+  // Build clean result card in place
+  card.classList.remove('processing');
+  card.innerHTML = `
+    <img src="${page.url}" alt="Page ${page.page}">
+    <div class="meta">
+      <span>${escapeHtml(page.filename)}</span>
+      <span>${t("chars_count", page.bubbles.length)}</span>
+      <a href="${page.url}" download>Save image</a>
+    </div>
+  `;
+  card.onclick = () => openInEditor(page.page);
+  delete processingCards[page.page];
+}
+
+//═════════════════════════════════════════════════════════════════════
+// editor
+//═════════════════════════════════════════════════════════════════════
+
+$('btn-reload-job').onclick = async () => {
+  openJobModal();
+};
+
+async function refreshJobsList() {
+  try {
+    const r = await fetch('/api/jobs');
+    if (!r.ok) throw new Error('jobs unavailable');
+    const data = await r.json();
+    localJobs = data.jobs || [];
+    const datalist = $('work-title-list');
+    if (datalist) {
+      const titles = [...new Set(localJobs.map(j => j.work_title).filter(Boolean))];
+      datalist.innerHTML = titles.map(title => `<option value="${escapeHtml(title)}"></option>`).join('');
+    }
+    renderJobList();
+  } catch {
+    localJobs = [];
+  }
+}
+
+function openJobModal() {
+  $('job-modal')?.classList.add('open');
+  refreshJobsList();
+}
+
+function closeJobModal() {
+  $('job-modal')?.classList.remove('open');
+}
+
+function renderJobList() {
+  const list = $('job-list');
+  if (!list) return;
+  const q = ($('job-search')?.value || '').toLowerCase();
+  const jobs = localJobs.filter(job => JSON.stringify(job).toLowerCase().includes(q));
+  list.innerHTML = jobs.length ? jobs.map(job => `
+    <div class="job-row">
+      <div>
+        <strong>${escapeHtml(job.work_title || 'Untitled')} ${job.chapter_number ? '• Ch. ' + escapeHtml(job.chapter_number) : ''}</strong>
+        <small>${escapeHtml(job.target_lang_code || job.target_lang || '')} • ${escapeHtml(job.status || '')} • ${job.completed || job.pages_saved || 0}/${job.total_pages || job.pages_saved || 0} • ${escapeHtml(job.job_id)}</small>
+      </div>
+      <button type="button" data-load-job="${escapeHtml(job.job_id)}">Open</button>
+    </div>
+  `).join('') : '<div class="empty">No local jobs found</div>';
+  list.querySelectorAll('[data-load-job]').forEach(btn => {
+    btn.onclick = () => {
+      closeJobModal();
+      const job = localJobs.find(item => item.job_id === btn.dataset.loadJob) || null;
+      loadJob(btn.dataset.loadJob, job);
+    };
+  });
+}
+
+function renderJobList() {
+  const list = $('job-list');
+  if (!list) return;
+  const q = ($('job-search')?.value || '').toLowerCase();
+  const jobs = localJobs.filter(job => JSON.stringify(job).toLowerCase().includes(q));
+  list.innerHTML = jobs.length ? jobs.map(job => `
+    <div class="job-row">
+      <div>
+        <strong>${escapeHtml(job.work_title || t('job_modal_untitled'))}${job.chapter_number ? ' - ' + t('job_modal_chapter') + ' ' + escapeHtml(job.chapter_number) : ''}</strong>
+        <small>${escapeHtml(job.target_lang_code || job.target_lang || '')} - ${escapeHtml(job.status || '')} - ${job.completed || job.pages_saved || 0}/${job.total_pages || job.pages_saved || 0} - ${escapeHtml(job.job_id)}</small>
+      </div>
+      <button type="button" data-load-job="${escapeHtml(job.job_id)}">${t('job_modal_open')}</button>
+    </div>
+  `).join('') : `<div class="empty">${t('job_modal_empty')}</div>`;
+  list.querySelectorAll('[data-load-job]').forEach(btn => {
+    btn.onclick = () => {
+      closeJobModal();
+      const job = localJobs.find(item => item.job_id === btn.dataset.loadJob) || null;
+      loadJob(btn.dataset.loadJob, job);
+    };
+  });
+}
+
+$('job-modal-close')?.addEventListener('click', closeJobModal);
+$('job-search')?.addEventListener('input', renderJobList);
+$('job-modal')?.addEventListener('click', (event) => {
+  if (event.target === $('job-modal')) closeJobModal();
+});
+
+async function loadJob(jobId, jobMeta = null) {
+  try {
+    const r = await fetch(`/api/job/${jobId}`);
+    if (!r.ok) throw new Error('Job not found');
+    currentJobId = jobId;
+    $('job-id-display').textContent = jobId;
+    $('job-id-pill').classList.add('visible');
+    currentJobPages = await r.json();
+    if (jobMeta?.work_title && $('cfg-work-title')) $('cfg-work-title').value = jobMeta.work_title;
+    if (jobMeta?.chapter_number && $('cfg-chapter-number')) $('cfg-chapter-number').value = jobMeta.chapter_number;
+    setSelectByLanguageCode('cfg-source-lang', jobMeta?.source_lang_code);
+    setSelectByLanguageCode('cfg-lang', jobMeta?.target_lang_code);
+    totalPagesGlobal = jobMeta?.total_pages || currentJobPages.length || totalPagesGlobal;
+    uploadedJobReady = Boolean(jobMeta && (jobMeta.status === 'ready' || !jobMeta.pages_saved));
+    if (startUploadButton) startUploadButton.disabled = false;
+    populatePageSelect();
+    if (currentJobPages.length) openEditPage(currentJobPages[0].page);
+  } catch (e) {
+    alert(t("job_not_found", e.message));
+  }
+}
+
+function populatePageSelect() {
+  const sel = $('editor-page-select');
+  sel.innerHTML = '';
+  if (currentJobPages.length) {
+    $('btn-export-zip').disabled = false;
+    $('btn-export-cbz').disabled = false;
+  }
+  currentJobPages.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.page;
+    opt.textContent = `${t("editor_page")} ${p.page} — ${p.filename}`;
+    sel.appendChild(opt);
+  });
+  sel.onchange = () => openEditPage(parseInt(sel.value));
+}
+
+function openInEditor(pageNum) {
+  if (!currentJobId) return;
+  document.querySelector('.tab[data-panel="editor"]').click();
+  // If we already have this page cached from page_done events, use it directly.
+  // Avoids a server round-trip that might return stale or unflushed data.
+  if (currentJobPages.find(p => p.page === pageNum)) {
+    populatePageSelect();
+    openEditPage(pageNum);
+  } else {
+    loadJob(currentJobId).then(() => openEditPage(pageNum));
+  }
+}
+
+function openEditPage(pageNum) {
+  const page = currentJobPages.find(p => p.page === pageNum);
+  if (!page) return;
+  currentEditPage = page;
+  populateEditorBaseFontSelect();
+  $('editor-page-select').value = pageNum;
+  $('editor-image').innerHTML =
+    `<img src="${page.url}?t=${Date.now()}" alt="Page">`;
+
+  const side = $('editor-side');
+  side.innerHTML = '';
+  const bubbles = page.bubbles || [];
+  if (!bubbles.length) {
+    side.innerHTML = `<div class="empty">${t("no_bubbles")}</div>`;
+    return;
+  }
+  bubbles.forEach(b => {
+    const item = document.createElement('div');
+    item.className = 'bubble-item';
+    const fontVal = b.font_path || '';
+    const sizeVal = b.font_size != null && b.font_size !== '' ? b.font_size : '';
+    item.innerHTML = `
+      <div class="num">#${b.idx} ${b.speaker !== 'unknown' ? '— ' + escapeHtml(b.speaker) : ''}</div>
+      <div class="speaker">${b.x},${b.y} • ${b.w}×${b.h} • ${b.gender}</div>
+      <div class="original">${escapeHtml(b.text) || t("no_ocr")}</div>
+      <textarea data-idx="${b.idx}" data-field="translation">${escapeHtml(b.translation || '')}</textarea>
+      <div class="bubble-style">
+        <label data-i18n="editor_font">Font:</label>
+        <input type="hidden" class="bubble-font-input" data-idx="${b.idx}" data-field="font_path" value="${escapeHtml(fontVal)}">
+        ${renderBubbleFontToggles(b.idx, fontVal)}
+        <label data-i18n="editor_size">Size:</label>
+        <input type="number" class="bubble-size" data-idx="${b.idx}" data-field="font_size"
+               placeholder="auto" min="6" max="120" value="${sizeVal}">
+      </div>
+    `;
+    side.appendChild(item);
+  });
+  side.querySelectorAll('.bubble-font-toggle').forEach(btn => {
+    btn.onclick = () => setBubbleFont(btn.dataset.bubbleFont, btn.dataset.font || '');
+  });
+  applyI18n();
+}
+
+$('btn-rerender').onclick = async () => {
+  if (!currentEditPage) { alert(t("open_page_first")); return; }
+  // Собираем updates по idx — каждый бабл может иметь translation/font_path/font_size
+  const byIdx = {};
+  document.querySelectorAll('#editor-side [data-idx]').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    if (!byIdx[idx]) byIdx[idx] = { idx };
+    const field = el.dataset.field;
+    if (field === 'font_size') {
+      const v = el.value.trim();
+      byIdx[idx][field] = v === '' ? null : parseInt(v);
+    } else if (field === 'font_path') {
+      byIdx[idx][field] = el.value.trim() || null;
+    } else {
+      byIdx[idx][field] = el.value;
+    }
+  });
+  const updates = Object.values(byIdx);
+  const btn = $('btn-rerender');
+  btn.disabled = true; btn.textContent = t("rerendering");
+  try {
+    const r = await fetch(
+      `/api/job/${currentJobId}/page/${currentEditPage.page}/render`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bubbles: updates }),
+      }
+    );
+    if (!r.ok) throw new Error('render failed');
+    const data = await r.json();
+    updates.forEach(u => {
+      const b = currentEditPage.bubbles.find(x => x.idx === u.idx);
+      if (b) {
+        if ('translation' in u) b.translation = u.translation;
+        if ('font_path' in u) b.font_path = u.font_path;
+        if ('font_size' in u) b.font_size = u.font_size;
+      }
+    });
+    $('editor-image').innerHTML =
+      `<img src="${data.url}?t=${Date.now()}" alt="Page">`;
+  } catch (e) {
+    alert(t("rerender_failed", e.message));
+  } finally {
+    btn.disabled = false; btn.textContent = t("editor_rerender");
+  }
+};
+
+//═════════════════════════════════════════════════════════════════════
+// characters
+//═════════════════════════════════════════════════════════════════════
+
+let charactersData = {};
+
+$('btn-reload-chars').onclick = loadCharacters;
+$('btn-save-chars').onclick = saveCharacters;
+$('btn-clear-chars').onclick = async () => {
+  if (!Object.keys(charactersData).length) return;
+  if (!confirm(t("characters_clear_confirm"))) return;
+  await fetch('/api/characters', { method: 'DELETE' });
+  charactersData = {};
+  renderCharacters();
+};
+
+async function loadCharacters() {
+  const r = await fetch('/api/characters');
+  charactersData = await r.json();
+  renderCharacters();
+}
+
+function renderCharacters() {
+  const list = $('characters-list');
+  list.innerHTML = '';
+  const ids = Object.keys(charactersData);
+  if (!ids.length) {
+    list.innerHTML = `<div class="empty">${t("empty_archive")}</div>`;
+    return;
+  }
+  ids.forEach(cid => {
+    const c = charactersData[cid];
+    const card = document.createElement('div');
+    card.className = 'character-card';
+    const firstSeenLabel = LANG === 'ru' ? 'впервые на стр.' : 'first seen p.';
+    const labelName = LANG === 'ru' ? 'Имя' : 'Name';
+    const labelGender = LANG === 'ru' ? 'Пол' : 'Gender';
+    const labelAppearance = LANG === 'ru' ? 'Внешность' : 'Appearance';
+    const labelNotes = LANG === 'ru' ? 'Заметки' : 'Notes';
+    const btnDelete = LANG === 'ru' ? 'Удалить' : 'Delete';
+    card.innerHTML = `
+      <div class="id-tag">id: ${cid} • ${firstSeenLabel} ${c.first_seen || '?'}</div>
+      <div class="field">
+        <label>${labelName}</label>
+        <input data-id="${cid}" data-field="name" value="${escapeHtml(c.name || '')}">
+      </div>
+      <div class="field">
+        <label>${labelGender}</label>
+        <select data-id="${cid}" data-field="gender">
+          <option ${c.gender === 'male' ? 'selected' : ''}>male</option>
+          <option ${c.gender === 'female' ? 'selected' : ''}>female</option>
+          <option ${c.gender === 'unknown' ? 'selected' : ''}>unknown</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>${labelAppearance}</label>
+        <textarea data-id="${cid}" data-field="appearance">${escapeHtml(c.appearance || '')}</textarea>
+      </div>
+      <button class="btn-danger" data-del="${cid}" style="align-self:center;">${btnDelete}</button>
+      <div class="field" style="grid-column: 1 / -1;">
+        <label>${labelNotes}</label>
+        <textarea data-id="${cid}" data-field="notes">${escapeHtml(c.notes || '')}</textarea>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+
+  list.querySelectorAll('[data-id]').forEach(el => {
+    el.onchange = () => {
+      const id = el.dataset.id, field = el.dataset.field;
+      if (charactersData[id]) charactersData[id][field] = el.value;
+    };
+  });
+  list.querySelectorAll('[data-del]').forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.del;
+      if (!confirm(t("delete_char_q", id))) return;
+      await fetch(`/api/characters/${id}`, { method: 'DELETE' });
+      delete charactersData[id];
+      renderCharacters();
+    };
+  });
+}
+
+async function saveCharacters() {
+  const r = await fetch('/api/characters', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(charactersData),
+  });
+  const data = await r.json();
+  alert(t("saved_n_chars", data.count));
+}
+
+//═════════════════════════════════════════════════════════════════════
+// utils
+//═════════════════════════════════════════════════════════════════════
+
+function log(msg, cls = '') {
+  const el = document.createElement('div');
+  if (cls) el.className = cls;
+  el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  $('log').appendChild(el);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+function fmtTime(s) {
+  if (s < 60) return `${Math.round(s)}s`;
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return `${m}m ${sec}s`;
+}
+
+function naturalCompare(a, b) {
+  // Splits by runs of digits and compares them numerically:
+  // page2.png < page10.png; chapter_01 < chapter_2 (since 1 < 2)
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+  );
+}
+
+// Initial render
+placeRenderSettingsInSidebar();
+applyI18n();
+ensureLanguageOptions("cfg-source-lang", true);
+ensureLanguageOptions("cfg-lang");
+applyLanguageCodeLabels();
+loadModels();
+restoreConfig();
+wireFontToggles();
+loadInstalledFonts();
+if ($('editor-base-font')) {
+  $('editor-base-font').onchange = () => applyBaseFontToBubbles($('editor-base-font').value);
+}
+wireConfigPersistence();
+refreshJobsList();
+
+// ─── persisted config (lang/font/model) ─────────────────────────────────────
+
+function restoreConfig() {
+  // Language (translation target), font path — restore on load.
+  // Model is restored inside loadModels() once the list arrives.
+  const saved = JSON.parse(localStorage.getItem("config") || "{}");
+  if (saved.source_lang && hasOption("cfg-source-lang", saved.source_lang)) {
+    $('cfg-source-lang').value = saved.source_lang;
+  }
+  if (saved.target_lang && hasOption("cfg-lang", saved.target_lang)) {
+    $('cfg-lang').value = saved.target_lang;
+  }
+  if (saved.font_path) {
+    $('cfg-font').value = saved.font_path;
+    selectRenderFont(saved.font_path, false);
+  }
+  if (saved.work_title) {
+    $('cfg-work-title').value = saved.work_title;
+  }
+  if (saved.chapter_number) {
+    $('cfg-chapter-number').value = saved.chapter_number;
+  }
+  if (saved.debug) {
+    $('cfg-debug').checked = !!saved.debug;
+  }
+  if (saved.llm_debug) {
+    $('cfg-llm-debug').checked = !!saved.llm_debug;
+  }
+  if (saved.fast_mode) {
+    $('cfg-fast-mode').checked = !!saved.fast_mode;
+  }
+}
+
+function saveConfig() {
+  const cfg = {
+    source_lang: $('cfg-source-lang')?.value || 'Auto',
+    target_lang: $('cfg-lang').value,
+    font_path: $('cfg-font').value,
+    work_title: $('cfg-work-title')?.value || '',
+    chapter_number: $('cfg-chapter-number')?.value || '',
+    debug: $('cfg-debug').checked,
+    llm_debug: $('cfg-llm-debug').checked,
+    fast_mode: $('cfg-fast-mode').checked,
+    llm_model: $('cfg-model').value || "",
+  };
+  localStorage.setItem("config", JSON.stringify(cfg));
+}
+
+function wireConfigPersistence() {
+  // Persist any change to any config control
+  ['cfg-source-lang', 'cfg-lang', 'cfg-font', 'cfg-work-title', 'cfg-chapter-number', 'cfg-debug', 'cfg-llm-debug', 'cfg-fast-mode', 'cfg-model'].forEach(id => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener('change', saveConfig);
+    el.addEventListener('input', saveConfig);
+  });
+}
+
+function hasOption(selectId, value) {
+  const sel = $(selectId);
+  if (!sel) return false;
+  return Array.from(sel.options).some(o => o.value === value);
+}
+
+$('btn-export-zip').onclick = () => exportArchive('zip');
+$('btn-export-cbz').onclick = () => exportArchive('cbz');
+
+function exportArchive(fmt) {
+  if (!currentJobId) return;
+  // Anchor-based download: browser handles the file save dialog and
+  // sends Content-Disposition headers from server.
+  const url = `/api/job/${currentJobId}/export?fmt=${fmt}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';   // honors server-side Content-Disposition
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+async function loadModels() {
+  const sel = $('cfg-model');
+  try {
+    const r = await fetch('/api/models');
+    const data = await r.json();
+    sel.innerHTML = '';
+
+    // Backend error talking to Ollama
+    if (data.error) {
+      console.warn('Ollama error:', data.error);
+      log(`Ollama: ${data.error}`, 'warn');
+      const opt = document.createElement('option');
+      opt.textContent = t('cfg_model_none');
+      opt.disabled = true;
+      sel.appendChild(opt);
+      // Also expose a manual-input option so user can still proceed
+      addManualEntryOption(sel);
+      return;
+    }
+
+    const multimodal = data.models.filter(m => m.multimodal && !m.ocr);
+    const others = data.models.filter(m => !m.multimodal && !m.ocr);
+    const ocrs = data.models.filter(m => m.ocr);
+
+    if (!data.models.length) {
+      console.warn('Ollama has no models. Host:', data.ollama_host);
+      log(`No models in Ollama at ${data.ollama_host}. Run "ollama pull gemma3:27b"`, 'warn');
+      const opt = document.createElement('option');
+      opt.textContent = t('cfg_model_none');
+      opt.disabled = true;
+      sel.appendChild(opt);
+      addManualEntryOption(sel);
+      return;
+    }
+
+    console.log(`Loaded ${data.models.length} model(s) from ${data.ollama_host}`,
+                 'multimodal:', multimodal.map(m => m.name),
+                 'other:', others.map(m => m.name),
+                 'ocr:', ocrs.map(m => m.name));
+
+    const appendGroup = (label, list) => {
+      if (!list.length) return;
+      const group = document.createElement('optgroup');
+      group.label = label;
+      list.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        opt.textContent = `${m.name}${m.size_gb ? ` (${m.size_gb} GB)` : ''}`;
+        if (m.name === data.default) opt.selected = true;
+        group.appendChild(opt);
+      });
+      sel.appendChild(group);
+    };
+
+    appendGroup(
+      LANG === 'ru' ? 'Мультимодальные' : 'Multimodal',
+      multimodal
+    );
+    appendGroup(
+      LANG === 'ru' ? 'Прочие (могут не поддерживать изображения)' : 'Other (may not support images)',
+      others
+    );
+    appendGroup(
+      LANG === 'ru' ? 'OCR (не подходят для перевода)' : 'OCR (not suitable for translation)',
+      ocrs
+    );
+    addManualEntryOption(sel);
+
+    // Restore saved model if present in the list
+    const saved = JSON.parse(localStorage.getItem("config") || "{}");
+    if (saved.llm_model && hasOption("cfg-model", saved.llm_model)) {
+      sel.value = saved.llm_model;
+    }
+  } catch (e) {
+    console.error('loadModels failed:', e);
+    sel.innerHTML = `<option disabled>${t('cfg_model_none')}</option>`;
+    addManualEntryOption(sel);
+  }
+}
+
+function addManualEntryOption(sel) {
+  // Lets the user type a model name manually if dropdown isn't enough
+  const sep = document.createElement('option');
+  sep.disabled = true; sep.textContent = '──────────';
+  sel.appendChild(sep);
+  const manual = document.createElement('option');
+  manual.value = '__manual__';
+  manual.textContent = LANG === 'ru' ? '✎ Ввести вручную...' : '✎ Enter manually...';
+  sel.appendChild(manual);
+
+  sel.onchange = () => {
+    if (sel.value === '__manual__') {
+      const name = prompt(LANG === 'ru' ? 'Введите имя модели Ollama:' : 'Enter Ollama model name:', '');
+      if (name) {
+        // Add the typed name as a new option and select it
+        const custom = document.createElement('option');
+        custom.value = name; custom.textContent = name + ' (custom)';
+        custom.selected = true;
+        sel.insertBefore(custom, sep);
+      } else {
+        sel.selectedIndex = 0;
+      }
+    }
+  };
+}
+</script>
+</body>
+</html>

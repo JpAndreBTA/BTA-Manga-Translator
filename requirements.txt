@@ -1,0 +1,20 @@
+# Computer vision and numeric processing
+opencv-python>=4.10
+numpy>=1.26
+
+# Deep learning and model downloads
+torch>=2.3
+torchvision>=0.18
+transformers>=4.44
+huggingface_hub>=0.24
+
+# Image rendering and font handling
+Pillow>=10.4
+
+# Local Ollama API client
+requests>=2.32
+
+# Backend web UI and browser-extension API
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
