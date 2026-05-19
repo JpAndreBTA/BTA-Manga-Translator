@@ -82,7 +82,8 @@ LAMA_REPOS = [
 
 DISABLE_LAMA = os.environ.get("KOTOBA_DISABLE_LAMA", "").lower() in {"1", "true", "yes"}
 
-DEFAULT_FONT = "arial.ttf"   # переопределяется через process_directory(font_path=...)
+DEFAULT_FONT_ALIAS = "COMIC_BOLD"
+DEFAULT_FONT = DEFAULT_FONT_ALIAS   # переопределяется через process_directory(font_path=...)
 WEBP_QUALITY = max(1, min(100, int(os.environ.get("BTA_WEBP_QUALITY", "80"))))
 
 os.makedirs(CROPS_DIR, exist_ok=True)
@@ -97,6 +98,94 @@ def save_output_image(output_path: str, img_cv: np.ndarray) -> str:
     if not ok:
         raise RuntimeError(f"Could not save rendered image: {output_path}")
     return output_path
+
+
+def _font_search_dirs() -> list[str]:
+    base = os.path.dirname(os.path.abspath(__file__))
+    dirs = [
+        base,
+        os.path.join(base, "fonts"),
+        os.getcwd(),
+    ]
+    if os.name == "nt":
+        windir = os.environ.get("WINDIR", "C:/Windows")
+        local = os.environ.get("LOCALAPPDATA", "")
+        dirs.append(os.path.join(windir, "Fonts"))
+        if local:
+            dirs.append(os.path.join(local, "Microsoft", "Windows", "Fonts"))
+    else:
+        dirs.extend([
+            "/usr/share/fonts",
+            "/usr/local/share/fonts",
+            os.path.expanduser("~/.fonts"),
+            os.path.expanduser("~/.local/share/fonts"),
+            "/Library/Fonts",
+            "/System/Library/Fonts",
+            os.path.expanduser("~/Library/Fonts"),
+        ])
+    return [d for d in dirs if d and os.path.isdir(d)]
+
+
+def _iter_font_candidates(requested: str | None = None):
+    requested = (requested or "").strip()
+    alias_requested = requested.upper().replace("-", "_").replace(" ", "_") in {
+        DEFAULT_FONT_ALIAS,
+        "COMICBD",
+        "COMIC_SANS_BOLD",
+        "COMIC_SANS_MS_BOLD",
+    }
+    comic_candidates = [
+        "comicbd.ttf",
+        "Comic Sans MS Bold.ttf",
+        "COMICBD.TTF",
+        "ComicNeue-Bold.ttf",
+        "ComicNeueAngular-Bold.ttf",
+    ]
+    fallback_candidates = [
+        "Anime Ace 2.0 BB Bold.ttf", "AnimeAce2.0BB_Bold.ttf",
+        "Anime Ace 2.0 BB.ttf", "AnimeAce2.0BB.ttf",
+        "Ace 2.0 BB Cyr.ttf", "animeace2_bld.ttf", "animeace2_reg.ttf",
+        "CCWildWords.ttf", "wildwords.ttf",
+        "arialbd.ttf", "ARIALBD.TTF",
+        "calibrib.ttf",
+        "verdanab.ttf",
+        "DejaVuSans-Bold.ttf",
+        "arial.ttf",
+    ]
+
+    if requested and not alias_requested:
+        yield requested
+    yield from comic_candidates
+    yield from fallback_candidates
+
+    if os.name == "nt":
+        win_fonts = os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts")
+        if os.path.isdir(win_fonts):
+            for name in os.listdir(win_fonts):
+                lower = name.lower()
+                if any(kw in lower for kw in ("comic", "bold", "bd", "black", "heavy")):
+                    yield os.path.join(win_fonts, name)
+
+
+def resolve_font_path(requested: str | None = None) -> str | None:
+    """Resolve COMIC_BOLD or a requested font to a usable local font path."""
+    search_dirs = _font_search_dirs()
+    seen: set[str] = set()
+    for cand in _iter_font_candidates(requested):
+        variants = [cand]
+        if cand and not os.path.isabs(cand):
+            variants.extend(os.path.join(folder, cand) for folder in search_dirs)
+        for variant in variants:
+            key = os.path.normcase(os.path.abspath(variant)) if variant else ""
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            try:
+                ImageFont.truetype(variant, 12)
+                return variant
+            except OSError:
+                continue
+    return None
 
 
 def _read_hf_token_file(path):
@@ -1713,6 +1802,7 @@ def fit_text_in_box(draw, text: str, box_w: int, box_h: int,
     """
     if font_path is None:
         font_path = DEFAULT_FONT
+    resolved_font_path = resolve_font_path(font_path) or font_path
     # Padding с запасом: 4 мало для крупных шрифтов где descender выпадает.
     # Дополнительный безопасный отступ для нижних выносных элементов.
     padding = 6
@@ -1720,10 +1810,10 @@ def fit_text_in_box(draw, text: str, box_w: int, box_h: int,
     usable_h = box_h - padding * 2
 
     def try_load_font(size: int):
-        if font_path is None:
+        if resolved_font_path is None:
             return None
         try:
-            return ImageFont.truetype(font_path, size)
+            return ImageFont.truetype(resolved_font_path, size)
         except OSError:
             return None
 
@@ -1981,11 +2071,12 @@ def _fit_at_exact_size(draw, text: str, box_w: int, box_h: int,
     """
     if font_path is None:
         font_path = DEFAULT_FONT
+    resolved_font_path = resolve_font_path(font_path) or resolve_font_path(DEFAULT_FONT)
     try:
-        font = ImageFont.truetype(font_path, size)
+        font = ImageFont.truetype(resolved_font_path or font_path, size)
     except OSError:
         try:
-            font = ImageFont.truetype(DEFAULT_FONT, size)
+            font = ImageFont.truetype(resolve_font_path(DEFAULT_FONT) or DEFAULT_FONT, size)
         except OSError:
             font = ImageFont.load_default()
 
@@ -2384,7 +2475,7 @@ def format_duration(seconds: float) -> str:
 def process_directory(input_dir: str, output_dir: str = RESULTS_DIR,
                       source_lang: str = "Auto",
                       target_lang: str = "Russian",
-                      font_path: str = "arial.ttf",
+                      font_path: str = DEFAULT_FONT_ALIAS,
                       font_size: int | None = None,
                       debug: bool = False,
                       fast_mode: bool = False,
@@ -2408,57 +2499,7 @@ def process_directory(input_dir: str, output_dir: str = RESULTS_DIR,
         global LLM_MODEL
         LLM_MODEL = llm_model
         print(f"[llm] Using model: {llm_model}")
-    # Проверяем шрифт. Если указан — используем его. Если нет — пробуем
-    # типичные манга-friendly шрифты по очереди, отдавая предпочтение жирным.
-    def _resolve_font(requested: str) -> str | None:
-        """Возвращает рабочий путь к шрифту или None."""
-        # 1. Сначала пробуем то что запросил пользователь
-        try:
-            ImageFont.truetype(requested, 12)
-            return requested
-        except OSError:
-            pass
-        # 2. Кандидаты в порядке предпочтения. Жирные манга-шрифты сверху,
-        #    затем системные жирные fallback'и, в конце обычные.
-        candidates = [
-            "Anime Ace 2.0 BB Bold.ttf", "AnimeAce2.0BB_Bold.ttf",
-            "Anime Ace 2.0 BB.ttf", "AnimeAce2.0BB.ttf",
-            "Ace 2.0 BB Cyr.ttf", "animeace2_bld.ttf", "animeace2_reg.ttf",
-            "CCWildWords.ttf", "wildwords.ttf",
-            "arialbd.ttf",    # Arial Bold — есть на каждой Windows
-            "ARIALBD.TTF",
-            "calibrib.ttf",   # Calibri Bold
-            "verdanab.ttf",   # Verdana Bold
-            "DejaVuSans-Bold.ttf",
-            "arial.ttf",      # Final fallback
-        ]
-        # Также пробуем стандартные пути к шрифтам Windows
-        win_fonts = "C:/Windows/Fonts/"
-        if os.path.isdir(win_fonts):
-            candidates = candidates + [
-                os.path.join(win_fonts, name) for name in os.listdir(win_fonts)
-                if any(kw in name.lower() for kw in ("bold", "bd", "black", "heavy"))
-            ][:5]
-        local_font_dirs = [
-            os.path.dirname(os.path.abspath(__file__)),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts"),
-            os.getcwd(),
-        ]
-        expanded_candidates = []
-        for cand in candidates:
-            expanded_candidates.append(cand)
-            if not os.path.isabs(cand):
-                expanded_candidates.extend(os.path.join(folder, cand) for folder in local_font_dirs)
-        candidates = expanded_candidates
-        for cand in candidates:
-            try:
-                ImageFont.truetype(cand, 12)
-                return cand
-            except OSError:
-                continue
-        return None
-
-    resolved = _resolve_font(font_path)
+    resolved = resolve_font_path(font_path)
     global DEFAULT_FONT
     if resolved:
         DEFAULT_FONT = resolved
@@ -2581,7 +2622,7 @@ if __name__ == "__main__":
         # Для японских имён в скобках укажите CJK-шрифт, например:
         #   font_path="/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
         #   font_path="C:/Windows/Fonts/YuGothM.ttc"
-        font_path="arial.ttf",
+        font_path=DEFAULT_FONT_ALIAS,
         # debug=True — рисует рамки и номера баблов для диагностики
         debug=False,
         # куда писать журнал проблем

@@ -391,7 +391,14 @@ async def list_fonts():
     """Return fonts installed on the backend device plus local project fonts."""
     exts = {".ttf", ".otf", ".ttc"}
     seen = set()
-    fonts = []
+    fonts = [{
+        "label": "Comic Bold",
+        "path": mt.DEFAULT_FONT_ALIAS,
+        "file": mt.DEFAULT_FONT_ALIAS,
+        "bold": True,
+        "local": True,
+        "virtual": True,
+    }]
     project_root = str(Path(__file__).parent).lower()
 
     for folder in _installed_font_dirs():
@@ -417,8 +424,9 @@ async def list_fonts():
         except OSError:
             continue
 
-    preferred = ("arialbd.ttf", "arial.ttf", "calibrib.ttf", "verdanab.ttf", "dejavusans-bold.ttf")
+    preferred = ("comicbd.ttf", "comic sans ms bold.ttf", "arialbd.ttf", "arial.ttf", "calibrib.ttf", "verdanab.ttf", "dejavusans-bold.ttf")
     fonts.sort(key=lambda f: (
+        0 if f.get("path") == mt.DEFAULT_FONT_ALIAS else 1,
         preferred.index(f["file"].lower()) if f["file"].lower() in preferred else len(preferred),
         not f["local"],
         not f["bold"],
@@ -427,7 +435,7 @@ async def list_fonts():
     ))
     return {
         "fonts": fonts,
-        "default": fonts[0]["path"] if fonts else "arial.ttf",
+        "default": mt.DEFAULT_FONT_ALIAS,
     }
 
 
@@ -559,7 +567,7 @@ async def upload_chapter(
     files: list[UploadFile] = File(...),
     source_lang: str = Form("Auto"),
     target_lang: str = Form("Russian"),
-    font_path: str = Form("arial.ttf"),
+    font_path: str = Form(mt.DEFAULT_FONT_ALIAS),
     debug: bool = Form(False),
     llm_model: str = Form(""),
     llm_debug: bool = Form(False),
@@ -1696,7 +1704,7 @@ async def translate_web_image(
     file: UploadFile = File(...),
     source_lang: str = Form("Auto"),
     target_lang: str = Form("Portuguese (Brazil)"),
-    font_path: str = Form("arial.ttf"),
+    font_path: str = Form(mt.DEFAULT_FONT_ALIAS),
     font_size: Optional[int] = Form(None),
     debug: bool = Form(False),
     llm_model: str = Form(""),
@@ -1760,7 +1768,7 @@ async def translate_web_image_bubbles(
     file: UploadFile = File(...),
     source_lang: str = Form("Auto"),
     target_lang: str = Form("Portuguese (Brazil)"),
-    font_path: str = Form("arial.ttf"),
+    font_path: str = Form(mt.DEFAULT_FONT_ALIAS),
     font_size: Optional[int] = Form(None),
     debug: bool = Form(False),
     llm_model: str = Form(""),
@@ -1824,7 +1832,7 @@ async def translate_web_image_bubbles_stream(
     file: UploadFile = File(...),
     source_lang: str = Form("Auto"),
     target_lang: str = Form("Portuguese (Brazil)"),
-    font_path: str = Form("arial.ttf"),
+    font_path: str = Form(mt.DEFAULT_FONT_ALIAS),
     font_size: Optional[int] = Form(None),
     debug: bool = Form(False),
     llm_model: str = Form(""),

@@ -2028,9 +2028,9 @@
     </div>
     <div>
       <label data-i18n="cfg_font">Font path</label>
-      <input id="cfg-font" value="arial.ttf" type="hidden">
+      <input id="cfg-font" value="COMIC_BOLD" type="hidden">
       <div class="font-toggle-grid" id="font-toggle-grid">
-        <button type="button" class="font-toggle active" data-font="arial.ttf">Loading fonts...</button>
+        <button type="button" class="font-toggle active" data-font="COMIC_BOLD">Comic Bold</button>
       </div>
     </div>
     <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
@@ -2516,6 +2516,7 @@ let totalPagesGlobal = 0;
 let uploadedJobReady = false;
 let localJobs = [];
 let availableFonts = [];
+const DEFAULT_RENDER_FONT = 'COMIC_BOLD';
 // Map page idx → card element while processing
 const processingCards = {};
 
@@ -2545,7 +2546,7 @@ function wireFontToggles() {
   document.querySelectorAll('.font-toggle').forEach(btn => {
     btn.onclick = () => selectRenderFont(btn.dataset.font);
   });
-  selectRenderFont($('cfg-font')?.value || 'arial.ttf', false);
+  selectRenderFont($('cfg-font')?.value || DEFAULT_RENDER_FONT, false);
 }
 
 function fontLabelForPath(path) {
@@ -2564,6 +2565,7 @@ function populateEditorBaseFontSelect() {
   const select = $('editor-base-font');
   if (!select) return;
   const fonts = availableFonts.length ? availableFonts : [
+    { label: "Comic Bold", path: DEFAULT_RENDER_FONT },
     { label: "Arial", path: "arial.ttf" },
     { label: "Arial Bold", path: "arialbd.ttf" },
   ];
@@ -2588,6 +2590,7 @@ function setBubbleFont(idx, fontPath) {
 function renderBubbleFontToggles(idx, selectedFont) {
   const fonts = availableFonts.length ? availableFonts : [
     { label: "Default", path: "" },
+    { label: "Comic Bold", path: DEFAULT_RENDER_FONT },
     { label: "Arial", path: "arial.ttf" },
     { label: "Arial Bold", path: "arialbd.ttf" },
   ];
@@ -2623,7 +2626,7 @@ async function loadInstalledFonts() {
   const grid = $('font-toggle-grid');
   const input = $('cfg-font');
   if (!grid || !input) return;
-  const selected = input.value || 'arial.ttf';
+  const selected = input.value || DEFAULT_RENDER_FONT;
   try {
     const response = await fetch('/api/fonts');
     if (!response.ok) throw new Error('fonts request failed');
@@ -2648,13 +2651,15 @@ async function loadInstalledFonts() {
     populateEditorBaseFontSelect();
   } catch (error) {
     availableFonts = [
+      { label: "Comic Bold", path: DEFAULT_RENDER_FONT, file: DEFAULT_RENDER_FONT },
       { label: "Arial", path: "arial.ttf", file: "arial.ttf" },
       { label: "Arial Bold", path: "arialbd.ttf", file: "arialbd.ttf" },
       { label: "Calibri Bold", path: "calibrib.ttf", file: "calibrib.ttf" },
       { label: "Verdana Bold", path: "verdanab.ttf", file: "verdanab.ttf" },
     ];
     grid.innerHTML = `
-      <button type="button" class="font-toggle active" data-font="arial.ttf">Arial</button>
+      <button type="button" class="font-toggle active" data-font="COMIC_BOLD">Comic Bold</button>
+      <button type="button" class="font-toggle" data-font="arial.ttf">Arial</button>
       <button type="button" class="font-toggle" data-font="arialbd.ttf">Arial Bold</button>
       <button type="button" class="font-toggle" data-font="calibrib.ttf">Calibri Bold</button>
       <button type="button" class="font-toggle" data-font="verdanab.ttf">Verdana Bold</button>
@@ -3658,16 +3663,18 @@ function restoreConfig() {
   // Language (translation target), font path — restore on load.
   // Model is restored inside loadModels() once the list arrives.
   const saved = JSON.parse(localStorage.getItem("config") || "{}");
+  const savedFontName = String(saved.font_path || '').split(/[\\/]/).pop().toLowerCase();
+  if (!saved.font_path || ['arial.ttf', 'arialbd.ttf'].includes(savedFontName)) {
+    saved.font_path = DEFAULT_RENDER_FONT;
+  }
   if (saved.source_lang && hasOption("cfg-source-lang", saved.source_lang)) {
     $('cfg-source-lang').value = saved.source_lang;
   }
   if (saved.target_lang && hasOption("cfg-lang", saved.target_lang)) {
     $('cfg-lang').value = saved.target_lang;
   }
-  if (saved.font_path) {
-    $('cfg-font').value = saved.font_path;
-    selectRenderFont(saved.font_path, false);
-  }
+  $('cfg-font').value = saved.font_path || DEFAULT_RENDER_FONT;
+  selectRenderFont($('cfg-font').value, false);
   if (saved.work_title) {
     $('cfg-work-title').value = saved.work_title;
   }
