@@ -2030,6 +2030,40 @@ def _fit_at_exact_size(draw, text: str, box_w: int, box_h: int,
     return font, lines, heights, spacing
 
 
+def _backend_render_box(bubble: dict, image_width: int, image_height: int) -> tuple[int, int, int, int]:
+    """Return a text-focused backend render box clamped to the page."""
+    tx = int(bubble.get("x", bubble.get("render_x", 0)))
+    ty = int(bubble.get("y", bubble.get("render_y", 0)))
+    tw = int(bubble.get("width", bubble.get("w", bubble.get("render_width", 1))))
+    th = int(bubble.get("height", bubble.get("h", bubble.get("render_height", 1))))
+    pad_x = max(8, min(24, int(tw * 0.08)))
+    pad_y = max(6, min(18, int(th * 0.10)))
+    x = tx - pad_x
+    y = ty - pad_y
+    w = tw + pad_x * 2
+    h = th + pad_y * 2
+
+    # Keep any saved editor/job render box as an outer boundary, but do not let
+    # it enlarge the text area into balloon tails or blank margins.
+    if all(key in bubble and bubble.get(key) is not None for key in ("render_x", "render_y", "render_width", "render_height")):
+        rx = int(bubble.get("render_x"))
+        ry = int(bubble.get("render_y"))
+        rw = int(bubble.get("render_width"))
+        rh = int(bubble.get("render_height"))
+        x0 = max(x, rx)
+        y0 = max(y, ry)
+        x1 = min(x + w, rx + rw)
+        y1 = min(y + h, ry + rh)
+        if x1 > x0 and y1 > y0:
+            x, y, w, h = x0, y0, x1 - x0, y1 - y0
+
+    x = max(0, min(x, image_width - 1))
+    y = max(0, min(y, image_height - 1))
+    w = max(1, min(w, image_width - x))
+    h = max(1, min(h, image_height - y))
+    return x, y, w, h
+
+
 def draw_results(img_cv: np.ndarray, bubbles: list[dict],
                  debug: bool = False) -> np.ndarray:
     """
@@ -2056,10 +2090,7 @@ def draw_results(img_cv: np.ndarray, bubbles: list[dict],
         translation = b.get("translation", "")
         if not translation:
             continue
-        x = int(b.get("render_x", b.get("overlay_x", b["x"])))
-        y = int(b.get("render_y", b.get("overlay_y", b["y"])))
-        w = int(b.get("render_width", b.get("overlay_w", b["width"])))
-        h = int(b.get("render_height", b.get("overlay_h", b["height"])))
+        x, y, w, h = _backend_render_box(b, pil.width, pil.height)
         color = b.get("_text_color", (0, 0, 0))
         block = _render_text_block(
             translation, w, h, color,
@@ -2106,7 +2137,14 @@ def reading_order(bubble: dict) -> tuple:
 
 def attach_render_boxes(text_bubbles: list[dict], all_bubbles: list[dict],
                         image_width: int, image_height: int) -> list[dict]:
-    """Use the detected speech balloon area for rendering while keeping OCR/inpaint on text boxes."""
+    """Use a conservative inner text area for backend rendering.
+
+    The detector's full speech balloon boxes often include tails and wide blank
+    margins. Rendering into that full rectangle makes the font fitter believe it
+    has much more vertical space than the readable center of the balloon, so the
+    translated text can look like it leaks out of the bubble. Keep OCR/inpaint on
+    the detected text box and render into that box with a small bounded padding.
+    """
     containers = [b for b in all_bubbles if b.get("class") == "bubble"]
 
     def clamp_box(x: int, y: int, w: int, h: int) -> tuple[int, int, int, int]:
@@ -2115,6 +2153,21 @@ def attach_render_boxes(text_bubbles: list[dict], all_bubbles: list[dict],
         w = max(1, min(int(w), image_width - x))
         h = max(1, min(int(h), image_height - y))
         return x, y, w, h
+
+    def padded_text_box(x: int, y: int, w: int, h: int,
+                        parent: dict | None = None) -> tuple[int, int, int, int]:
+        pad_x = max(8, min(24, int(w * 0.08)))
+        pad_y = max(6, min(18, int(h * 0.10)))
+        rx, ry, rw, rh = x - pad_x, y - pad_y, w + pad_x * 2, h + pad_y * 2
+        if parent is not None:
+            px, py, pw, ph = int(parent["x"]), int(parent["y"]), int(parent["width"]), int(parent["height"])
+            rx0 = max(rx, px)
+            ry0 = max(ry, py)
+            rx1 = min(rx + rw, px + pw)
+            ry1 = min(ry + rh, py + ph)
+            if rx1 > rx0 and ry1 > ry0:
+                rx, ry, rw, rh = rx0, ry0, rx1 - rx0, ry1 - ry0
+        return clamp_box(rx, ry, rw, rh)
 
     for tb in text_bubbles:
         x, y, w, h = int(tb["x"]), int(tb["y"]), int(tb["width"]), int(tb["height"])
@@ -2133,10 +2186,9 @@ def attach_render_boxes(text_bubbles: list[dict], all_bubbles: list[dict],
                 candidates.append((pw * ph, parent))
         if candidates:
             parent = min(candidates, key=lambda item: item[0])[1]
-            rx, ry, rw, rh = clamp_box(parent["x"], parent["y"], parent["width"], parent["height"])
+            rx, ry, rw, rh = padded_text_box(x, y, w, h, parent)
         else:
-            pad = max(10, int(max(w, h) * 0.22))
-            rx, ry, rw, rh = clamp_box(x - pad, y - pad, w + pad * 2, h + pad * 2)
+            rx, ry, rw, rh = padded_text_box(x, y, w, h)
         tb["render_x"], tb["render_y"] = rx, ry
         tb["render_width"], tb["render_height"] = rw, rh
     return text_bubbles
