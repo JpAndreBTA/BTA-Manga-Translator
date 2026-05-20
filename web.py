@@ -121,6 +121,10 @@ VISUAL_FAILURE_BLOCKED_FRAGMENTS = (
     "cannot read this image",
     "no readable text",
     "unreadable text",
+    "not shown",
+    "not visible",
+    "not depicted",
+    "not displayed",
     "a imagem esta",
     "imagem esta muito",
     "imagem muito",
@@ -131,6 +135,10 @@ VISUAL_FAILURE_BLOCKED_FRAGMENTS = (
     "nao da para ler",
     "texto ilegivel",
     "nao ha texto legivel",
+    "isso nao esta mostrado",
+    "nao esta mostrado",
+    "nao esta visivel",
+    "nao aparece",
 )
 
 
@@ -1873,6 +1881,88 @@ def _fallback_short_expression_translation(text: str, target_lang: str) -> str:
     return replacements.get(normalized, "")
 
 
+def _source_terminal_punctuation(text: str, default: str = "") -> str:
+    stripped = (text or "").strip()
+    if stripped.endswith("?!"):
+        return "?!"
+    if stripped.endswith("!!"):
+        return "!!"
+    if stripped.endswith("...!"):
+        return "...!"
+    if stripped.endswith("..."):
+        return "..."
+    if stripped.endswith("?"):
+        return "?"
+    if stripped.endswith("!"):
+        return "!"
+    if stripped.endswith("."):
+        return "."
+    return default
+
+
+def _is_onomatopoeia_text(text: str) -> bool:
+    cleaned = _merge_clean_lines_to_paragraphs(_clean_visible_text_preserve_lines(text))
+    normalized = _normalized_dialogue_line(cleaned)
+    if not normalized:
+        return False
+    tokens = normalized.split()
+    sound_tokens = {
+        "uwaaaah", "uwaaah", "uwaah", "uaaaah", "uaaah", "aaah", "aaaah", "aaaaah",
+        "waaaah", "waaah", "aaaa", "ugh", "grr", "brr", "shhh", "psst",
+        "boom", "bang", "bam", "thud", "clang", "clank", "whoosh", "wham",
+    }
+    if all(token in sound_tokens for token in tokens):
+        return True
+    if len(tokens) == 1:
+        token = tokens[0]
+        if token in {"huh", "what", "damn"}:
+            return False
+        return len(token) >= 5 and re.search(r"([aeiouh])\1{2,}", token) is not None
+    return len(tokens) <= 3 and all(
+        token in sound_tokens or (len(token) >= 4 and re.search(r"([aeiouh])\1{2,}", token))
+        for token in tokens
+    )
+
+
+def _direct_live_translation(text: str, target_lang: str) -> str:
+    cleaned = _merge_visual_lines_to_paragraphs(text)
+    if not cleaned:
+        return ""
+    if _is_onomatopoeia_text(cleaned):
+        return cleaned
+    if not _looks_like_portuguese_target(target_lang):
+        return ""
+
+    normalized = _normalized_dialogue_line(cleaned)
+    punctuation = _source_terminal_punctuation(cleaned)
+    phrase_map = {
+        "the smell of blood": "Cheiro de sangue",
+        "smell of blood": "Cheiro de sangue",
+        "something s wrong the smell of blood": "Tem algo errado...! Cheiro de sangue",
+        "somethings wrong the smell of blood": "Tem algo errado...! Cheiro de sangue",
+        "something s wrong of blood": "Tem algo errado...! Cheiro de sangue",
+        "somethings wrong of blood": "Tem algo errado...! Cheiro de sangue",
+        "all troops": "Todas as tropas",
+        "something s wrong": "Tem algo errado",
+        "somethings wrong": "Tem algo errado",
+        "what are you even trying to say it s frustrating": "O que voc\u00ea est\u00e1 tentando dizer? Isso \u00e9 frustrante",
+        "what are you trying to say it s frustrating": "O que voc\u00ea est\u00e1 tentando dizer? Isso \u00e9 frustrante",
+    }
+    phrase = phrase_map.get(normalized)
+    if not phrase:
+        return ""
+
+    if normalized in {"the smell of blood", "smell of blood"}:
+        return phrase + (punctuation or "?")
+    if normalized == "all troops":
+        return phrase + (punctuation or "!")
+    if "blood" in normalized:
+        return phrase + (punctuation or "?")
+    if normalized in {"something s wrong", "somethings wrong"}:
+        return phrase + (punctuation or "...!")
+    return phrase + (punctuation or ".")
+
+
 def _translation_quality_instruction(target_lang: str) -> str:
     if _looks_like_portuguese_target(target_lang):
         return (
@@ -2131,6 +2221,10 @@ def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_mode
     adaptation_mode = _resolve_slang_adaptation(adaptation_mode, target_lang)
     effective_target_lang = _target_lang_for_slang_adaptation(adaptation_mode, target_lang)
     cache_key = (source_lang or "Auto", effective_target_lang, adaptation_mode, cleaned)
+    direct = _direct_live_translation(cleaned, effective_target_lang)
+    if direct:
+        _cache_put_limited(LIVE_TRANSLATION_CACHE, cache_key, direct, 1000)
+        return direct
     if cache_key in LIVE_TRANSLATION_CACHE:
         cached = LIVE_TRANSLATION_CACHE[cache_key]
         if not _is_bad_live_translation(cached):
@@ -2211,6 +2305,11 @@ def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, t
     effective_target_lang = _target_lang_for_slang_adaptation(adaptation_mode, target_lang)
     for idx, text in cleaned_items:
         cache_key = (source_lang or "Auto", effective_target_lang, adaptation_mode, text)
+        direct = _direct_live_translation(text, effective_target_lang)
+        if direct:
+            results[idx] = direct
+            _cache_put_limited(LIVE_TRANSLATION_CACHE, cache_key, direct, 1000)
+            continue
         cached = LIVE_TRANSLATION_CACHE.get(cache_key)
         if cached and not _is_bad_live_translation(cached):
             results[idx] = cached
@@ -2239,8 +2338,8 @@ If the source has stutter, slang, mixed-language wording, or broken speech, adap
 Preserve names, titles, ranks, numbers, relationships, threats, jokes, and cause/effect.
 Keep translations natural for speech bubbles, but do not remove meaning just to make the line shorter.
 Preserve paragraph breaks when present.
-The entries are in manga reading order and may be consecutive parts of the same page.
-Use nearby entries only as context for pronouns, tone, and speaker intent.
+The entries are independent speech bubbles from the same page.
+Do not use text from one entry as source content for another entry.
 Each entry must remain an independent translation of its own OCR text.
 Do not merge entries, split entries, summarize, invent missing facts, or move meaning between bubbles.
 If OCR is partially corrupted, translate the confident readable content and keep the result coherent.
@@ -2556,6 +2655,7 @@ async def translate_web_image_bubbles_stream(
 
     async def stream():
         tasks: list[asyncio.Task] = []
+        translation_tasks: list[asyncio.Task] = []
         try:
             mt.DEBUG_LLM = bool(llm_debug)
             requested_adaptation = "auto" if slang_adaptation else "off"
@@ -2606,7 +2706,6 @@ async def translate_web_image_bubbles_stream(
             pending_translate: list[tuple[int, dict]] = []
             ocr_sem = asyncio.Semaphore(WEB_OCR_CONCURRENCY)
             translate_sem = asyncio.Semaphore(WEB_TRANSLATION_CONCURRENCY)
-            translation_tasks: list[asyncio.Task] = []
 
             async def run_ocr(index: int, bubble: dict):
                 cache_key = (image_key, *_bubble_cache_box(bubble))

@@ -489,6 +489,10 @@ function visibleBubbleTranslation(text) {
     "cant read the image",
     "no readable text",
     "unreadable text",
+    "not shown",
+    "not visible",
+    "not depicted",
+    "not displayed",
     "a imagem esta",
     "imagem esta muito",
     "muito borrada",
@@ -496,7 +500,11 @@ function visibleBubbleTranslation(text) {
     "pixelizada",
     "nao consigo ler",
     "nao da para ler",
-    "texto ilegivel"
+    "texto ilegivel",
+    "isso nao esta mostrado",
+    "nao esta mostrado",
+    "nao esta visivel",
+    "nao aparece"
   ];
   if (hasRepeatedBubblePhraseNoise(value)) return "";
   const words = lowered.match(/[a-z0-9']+/g) || [];
