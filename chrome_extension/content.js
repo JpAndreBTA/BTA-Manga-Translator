@@ -430,6 +430,28 @@ function mergeSoftBubbleLineBreaks(text) {
     .trim();
 }
 
+function hasRepeatedBubblePhraseNoise(text) {
+  const tokens = foldBubbleText(text)
+    .match(/[a-z0-9]+/g)
+    ?.filter((token) => token.length > 1) || [];
+  if (tokens.length < 8) return false;
+  for (const size of [5, 4, 3, 2]) {
+    if (tokens.length < size * 2) continue;
+    const counts = new Map();
+    for (let i = 0; i <= tokens.length - size; i += 1) {
+      const gram = tokens.slice(i, i + size).join(" ");
+      counts.set(gram, (counts.get(gram) || 0) + 1);
+    }
+    for (const count of counts.values()) {
+      const coverage = (count * size) / tokens.length;
+      if ((size >= 3 && count >= 2 && coverage >= 0.34) || (size === 2 && count >= 3 && coverage >= 0.36)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function visibleBubbleTranslation(text) {
   const value = mergeSoftBubbleLineBreaks(collapseRepeatedBubbleText(String(text || "").trim()));
   const lowered = foldBubbleText(value);
@@ -458,8 +480,25 @@ function visibleBubbleTranslation(text) {
     "retorne apenas",
     "sem explicacao",
     "nao ha texto",
-    "nao consigo"
+    "nao consigo",
+    "image is too blurry",
+    "image is blurry",
+    "too blurry",
+    "pixelated",
+    "cannot read the image",
+    "cant read the image",
+    "no readable text",
+    "unreadable text",
+    "a imagem esta",
+    "imagem esta muito",
+    "muito borrada",
+    "com pixels",
+    "pixelizada",
+    "nao consigo ler",
+    "nao da para ler",
+    "texto ilegivel"
   ];
+  if (hasRepeatedBubblePhraseNoise(value)) return "";
   const words = lowered.match(/[a-z0-9']+/g) || [];
   if (words.length >= 6) {
     const counts = new Map();

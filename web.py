@@ -110,6 +110,29 @@ PROMPT_ECHO_BLOCKED_FRAGMENTS = (
     "se nao houver texto",
 )
 
+VISUAL_FAILURE_BLOCKED_FRAGMENTS = (
+    "image is too blurry",
+    "image is blurry",
+    "too blurry",
+    "pixelated",
+    "cannot read the image",
+    "can't read the image",
+    "cant read the image",
+    "cannot read this image",
+    "no readable text",
+    "unreadable text",
+    "a imagem esta",
+    "imagem esta muito",
+    "imagem muito",
+    "muito borrada",
+    "com pixels",
+    "pixelizada",
+    "nao consigo ler",
+    "nao da para ler",
+    "texto ilegivel",
+    "nao ha texto legivel",
+)
+
 
 def _safe_slug(value: str, fallback: str = "untitled") -> str:
     value = (value or "").strip()
@@ -1693,9 +1716,43 @@ def _has_prompt_echo_fragment(text: str) -> bool:
     return any(fragment in folded for fragment in PROMPT_ECHO_BLOCKED_FRAGMENTS)
 
 
+def _has_visual_failure_fragment(text: str) -> bool:
+    folded = _fold_for_filter(text)
+    return any(fragment in folded for fragment in VISUAL_FAILURE_BLOCKED_FRAGMENTS)
+
+
 def _normalized_dialogue_line(text: str) -> str:
     folded = _fold_for_filter(text)
     return re.sub(r"[^a-z0-9]+", " ", folded).strip()
+
+
+def _dialogue_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", _fold_for_filter(text))
+
+
+def _has_repeated_ngram_noise(text: str) -> bool:
+    tokens = [token for token in _dialogue_tokens(text) if len(token) > 1]
+    if len(tokens) < 8:
+        return False
+
+    for size in (5, 4, 3, 2):
+        if len(tokens) < size * 2:
+            continue
+        grams = [" ".join(tokens[i:i + size]) for i in range(0, len(tokens) - size + 1)]
+        gram, count = Counter(grams).most_common(1)[0]
+        if not gram or count < 2:
+            continue
+        coverage = (count * size) / max(1, len(tokens))
+        if (size >= 3 and coverage >= 0.34) or (size == 2 and count >= 3 and coverage >= 0.36):
+            return True
+
+    normalized = _normalized_dialogue_line(text)
+    chunks = [chunk.strip() for chunk in re.split(r"\b(?:e|and|mas|but)\b|[.;:!?]+", normalized) if chunk.strip()]
+    if len(chunks) >= 4:
+        counts = Counter(chunks)
+        if any(len(chunk) >= 8 and count >= 3 for chunk, count in counts.items()):
+            return True
+    return False
 
 
 def _collapse_repeated_word_noise(line: str) -> str:
@@ -1802,6 +1859,8 @@ def _fallback_short_expression_translation(text: str, target_lang: str) -> str:
     normalized = _normalized_dialogue_line(re.sub(r"\b([a-zA-Z])[- ]+(?=[a-zA-Z])", "", text or ""))
     replacements = {
         "huh": "Ha?!",
+        "huhuh": "Ha?!",
+        "huh huh": "Ha?!",
         "uh": "Uh...",
         "damn": "Droga!",
         "damn it": "Droga!!",
@@ -1812,6 +1871,53 @@ def _fallback_short_expression_translation(text: str, target_lang: str) -> str:
         "that s": "I-isso...!",
     }
     return replacements.get(normalized, "")
+
+
+def _translation_quality_instruction(target_lang: str) -> str:
+    if _looks_like_portuguese_target(target_lang):
+        return (
+            "Use fluent Brazilian Portuguese word order. Translate compound noun phrases idiomatically, "
+            "for example 'Northern Great Plains' should become 'Grandes Planícies do Norte', not a word-by-word order. "
+            "Avoid literal calques, fragments, and repeated clauses."
+        )
+    return (
+        "Use fluent natural word order in the target language. Translate compound noun phrases idiomatically, "
+        "not word-by-word. Avoid fragments, repeated clauses, and literal calques."
+    )
+
+
+def _postprocess_live_translation(text: str, target_lang: str) -> str:
+    cleaned = _clean_live_translation(text)
+    if _looks_like_portuguese_target(target_lang):
+        cleaned = re.sub(
+            r"\bplan[ií]cies?\s+(?:do\s+)?norte\s+grandes?\b",
+            "Grandes Planícies do Norte",
+            cleaned,
+            flags=re.I,
+        )
+        cleaned = re.sub(
+            r"\bgrandes?\s+plan[ií]cies?\s+norte\b",
+            "Grandes Planícies do Norte",
+            cleaned,
+            flags=re.I,
+        )
+    return cleaned.strip()
+
+
+def _translation_suspicious_for_source(source_text: str, translation: str, target_lang: str) -> bool:
+    if _is_bad_live_translation(translation):
+        return True
+    source_tokens = _dialogue_tokens(source_text)
+    translation_tokens = _dialogue_tokens(translation)
+    if len(source_tokens) >= 8 and len(translation_tokens) <= max(3, int(len(source_tokens) * 0.30)):
+        return True
+    if len(source_tokens) >= 12 and len(translation_tokens) <= max(4, int(len(source_tokens) * 0.38)):
+        return True
+    if _looks_like_portuguese_target(target_lang):
+        folded = _fold_for_filter(translation)
+        if re.search(r"\b(said|says|master)\b", folded):
+            return True
+    return False
 
 
 def _ocr_region_preserve_layout(img_cv, bubble: dict, index: int) -> str:
@@ -2016,6 +2122,7 @@ def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_mode
     prompts = [f"""Translate this manga/comic speech bubble to {effective_target_lang}.
 {source_hint}
 {_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
+{_translation_quality_instruction(effective_target_lang)}
 Translate the actual meaning, not just word-by-word OCR fragments.
 Treat visual line breaks as layout only. Translate complete phrases and sentences.
 Do not translate each visual line as a separate word or sentence.
@@ -2032,6 +2139,7 @@ OCR TEXT:
 """, f"""You are given OCR text from a manga speech bubble. Translate it to {effective_target_lang}.
 {source_hint}
 {_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
+{_translation_quality_instruction(effective_target_lang)}
 Do not ask for OCR. Do not explain. Do not mention policies or limitations.
 Preserve the original meaning, names, titles, ranks, numbers, and tone.
 Do not summarize, embellish, or add facts that are not in the OCR.
@@ -2052,8 +2160,8 @@ OCR:
             num_predict=320,
             temperature=0.15,
         )
-        result = _clean_live_translation(translated)
-        if not _is_bad_live_translation(result):
+        result = _postprocess_live_translation(translated, effective_target_lang)
+        if not _translation_suspicious_for_source(cleaned, result, effective_target_lang):
             break
         result = ""
     if not result:
@@ -2098,6 +2206,7 @@ def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, t
     prompt = f"""Translate these manga/comic speech bubbles to {effective_target_lang}.
 {source_hint}
 {_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
+{_translation_quality_instruction(effective_target_lang)}
 Translate for meaning and coherence first, then naturalness.
 Treat visual line breaks as layout only. Translate complete phrases and sentences.
 Do not translate each visual line as a separate word or sentence.
@@ -2127,13 +2236,15 @@ INPUT:
         temperature=0.15,
     )
     parsed = mt.parse_json_array(raw)
+    pending_text_by_idx = dict(pending)
     for item in parsed:
         try:
             idx = int(item.get("idx"))
         except Exception:
             continue
-        translation = _clean_live_translation(str(item.get("translation", "")))
-        if translation and not _is_bad_live_translation(translation):
+        translation = _postprocess_live_translation(str(item.get("translation", "")), effective_target_lang)
+        source_text = pending_text_by_idx.get(idx, "")
+        if translation and not _translation_suspicious_for_source(source_text, translation, effective_target_lang):
             results[idx] = translation
 
     missing = [(idx, text) for idx, text in pending if idx not in results]
@@ -2143,7 +2254,7 @@ INPUT:
         translation = _translate_live_text(text, source_lang, target_lang, llm_model, adaptation_mode)
         if not translation:
             translation = _fallback_short_expression_translation(text, effective_target_lang)
-        if translation and not _is_bad_live_translation(translation):
+        if translation and not _translation_suspicious_for_source(text, translation, effective_target_lang):
             results[idx] = translation
 
     for idx, text in cleaned_items:
@@ -2192,6 +2303,10 @@ def _is_bad_live_translation(text: str) -> bool:
         return True
     if _has_prompt_echo_fragment(lowered):
         return True
+    if _has_visual_failure_fragment(lowered):
+        return True
+    if _has_repeated_ngram_noise(lowered):
+        return True
     words = re.findall(r"[A-Za-z0-9À-ÿ']+", lowered)
     if len(words) >= 6:
         repeated = Counter(words).most_common(1)[0]
@@ -2221,6 +2336,10 @@ def _is_bad_bubble_ocr(text: str) -> bool:
     if repeated[1] >= 3 and repeated[1] / max(1, len(words)) >= 0.45:
         return True
     if _has_prompt_echo_fragment(lowered):
+        return True
+    if _has_visual_failure_fragment(lowered):
+        return True
+    if _has_repeated_ngram_noise(lowered):
         return True
     blocked = (
         "no spaces",
