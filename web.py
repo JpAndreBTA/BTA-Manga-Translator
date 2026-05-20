@@ -1959,16 +1959,39 @@ def _ocr_region_preserve_layout(img_cv, bubble: dict, index: int) -> str:
         temperature=0.0,
     )
     retry = _remove_duplicate_dialogue_lines(_clean_visible_text_preserve_lines(raw_retry))
+    if retry and not _is_bad_bubble_ocr(retry):
+        print(f"     [OCR web retry] bubble {index}: {retry[:80]!r}")
+        return retry
+
+    processed_pixel = mt.preprocess_crop_pixel_ocr(img_cv, x, y, w, h)
+    pixel_path = crops_dir / f"web_bubble_{index:02d}_pixel.png"
+    mt.cv2.imwrite(str(pixel_path), processed_pixel)
+    raw_pixel = mt.ollama(
+        "glm-ocr:latest",
+        (
+            "The crop may be low-resolution or pixelated, but the printed text is visible. "
+            "Transcribe only the clearly visible printed manga text. "
+            "Preserve line breaks. Do not describe image quality. "
+            "If a word is uncertain, omit only that word. Return only text."
+        ),
+        str(pixel_path),
+        timeout=60,
+        num_predict=340,
+        temperature=0.0,
+    )
+    pixel = _remove_duplicate_dialogue_lines(_clean_visible_text_preserve_lines(raw_pixel))
+
     final = ""
-    for candidate in sorted((retry, cleaned), key=len, reverse=True):
+    for candidate in sorted((pixel, cleaned), key=len, reverse=True):
         if candidate and not _is_bad_bubble_ocr(candidate):
             final = candidate
             break
     if not final:
-        rejected = retry or cleaned
+        rejected = pixel or retry or cleaned
         print(f"     [OCR web discard] bubble {index}: {rejected[:80]!r}")
         return ""
-    print(f"     [OCR web retry] bubble {index}: {final[:80]!r}")
+    source = "pixel" if final == pixel and pixel else "retry"
+    print(f"     [OCR web {source}] bubble {index}: {final[:80]!r}")
     return final
 
 

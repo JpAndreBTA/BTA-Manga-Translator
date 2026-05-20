@@ -1622,6 +1622,46 @@ def preprocess_crop_minimal(img_cv: np.ndarray, x: int, y: int,
                                value=(255, 255, 255))
 
 
+def preprocess_crop_pixel_ocr(img_cv: np.ndarray, x: int, y: int,
+                              w: int, h: int) -> np.ndarray:
+    """
+    OCR fallback for visible but low-resolution/pixelated web text.
+    Keeps a small margin, upscales hard, sharpens strokes, and preserves grayscale
+    instead of forcing a binary threshold that can erase thin italic letters.
+    """
+    img_h, img_w = img_cv.shape[:2]
+    pad = max(2, int(min(w, h) * 0.04))
+    x0 = max(0, x - pad)
+    y0 = max(0, y - pad)
+    x1 = min(img_w, x + w + pad)
+    y1 = min(img_h, y + h + pad)
+    crop = img_cv[y0:y1, x0:x1]
+    if crop.size == 0:
+        return np.zeros((64, 64), dtype=np.uint8) + 255
+
+    h2, w2 = crop.shape[:2]
+    longest = max(h2, w2)
+    scale = 5 if longest < 240 else 4 if longest < 520 else 3
+    crop = cv2.resize(crop, (w2 * scale, h2 * scale), interpolation=cv2.INTER_LANCZOS4)
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    gray = cv2.fastNlMeansDenoising(gray, None, 7, 7, 21)
+    clahe = cv2.createCLAHE(clipLimit=2.6, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+    blur = cv2.GaussianBlur(gray, (0, 0), 1.1)
+    sharp = cv2.addWeighted(gray, 1.75, blur, -0.75, 0)
+
+    # Keep text direction as-is; only normalize contrast. Otsu helps on
+    # compressed/pixelated black-on-white bubbles without harming gray edges.
+    try:
+        _, otsu = cv2.threshold(sharp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        if 0.08 < (otsu < 128).mean() < 0.55:
+            sharp = otsu
+    except Exception:
+        pass
+
+    return cv2.copyMakeBorder(sharp, 96, 96, 96, 96, cv2.BORDER_CONSTANT, value=255)
+
+
 def ocr_region(img_cv: np.ndarray, x: int, y: int, w: int, h: int,
                idx: int, page_idx: int) -> str:
     """
