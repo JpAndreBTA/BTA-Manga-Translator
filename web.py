@@ -63,7 +63,8 @@ WEB_LLM_CONCURRENCY = max(1, int(os.environ.get("BTA_WEB_LLM_CONCURRENCY", "2") 
 WEB_CACHE_LIMIT = max(20, int(os.environ.get("BTA_WEB_CACHE_LIMIT", "240") or "240"))
 WEB_SPLIT_TEXT_GROUPS = os.environ.get("BTA_WEB_SPLIT_TEXT_GROUPS", "1").strip().lower() in ("1", "true", "yes", "on")
 WEB_SPLIT_VISUAL_TEXT = os.environ.get("BTA_WEB_SPLIT_VISUAL_TEXT", "1").strip().lower() in ("1", "true", "yes", "on")
-WEB_DETECTION_THRESHOLD = max(0.2, min(0.8, float(os.environ.get("BTA_WEB_DETECTION_THRESHOLD", "0.32") or "0.32")))
+WEB_FALLBACK_TEXT_REGIONS = os.environ.get("BTA_WEB_FALLBACK_TEXT_REGIONS", "0").strip().lower() in ("1", "true", "yes", "on")
+WEB_DETECTION_THRESHOLD = max(0.2, min(0.8, float(os.environ.get("BTA_WEB_DETECTION_THRESHOLD", "0.38") or "0.38")))
 LIVE_LLM_SEMAPHORE = asyncio.Semaphore(WEB_LLM_CONCURRENCY)
 
 
@@ -1220,6 +1221,20 @@ def _fallback_high_contrast_text_regions(
     return fallback
 
 
+def _with_optional_fallback_text_regions(
+    image_pil: Image.Image,
+    text_bubbles: list[dict],
+    image_width: int,
+    image_height: int,
+) -> list[dict]:
+    if not WEB_FALLBACK_TEXT_REGIONS:
+        return text_bubbles
+    if len(text_bubbles) > 2:
+        return text_bubbles
+    fallback = _fallback_high_contrast_text_regions(image_pil, text_bubbles, image_width, image_height)
+    return text_bubbles + fallback[: max(0, 4 - len(text_bubbles))]
+
+
 def _attach_overlay_boxes(detections: list[dict], image_width: int, image_height: int) -> list[dict]:
     containers = [
         b for b in detections
@@ -1571,7 +1586,7 @@ def _detect_text_bubbles(image_path: Path) -> tuple[object, list[dict]]:
     image_pil = Image.fromarray(mt.cv2.cvtColor(img_cv, mt.cv2.COLOR_BGR2RGB))
     bubbles = mt.detect_bubbles(image_pil, threshold=WEB_DETECTION_THRESHOLD)
     text_bubbles = _attach_overlay_boxes(bubbles, image_pil.size[0], image_pil.size[1])
-    text_bubbles.extend(_fallback_high_contrast_text_regions(image_pil, text_bubbles, image_pil.size[0], image_pil.size[1]))
+    text_bubbles = _with_optional_fallback_text_regions(image_pil, text_bubbles, image_pil.size[0], image_pil.size[1])
     split_bubbles = []
     for bubble in text_bubbles:
         split_bubbles.extend(_split_bubble_by_visual_text(image_pil.convert("RGB"), bubble, image_pil.size[0], image_pil.size[1]))
@@ -1587,7 +1602,7 @@ def _detect_text_bubbles_cached(image_path: Path, image_key: str) -> tuple[objec
     image_pil = Image.fromarray(mt.cv2.cvtColor(img_cv, mt.cv2.COLOR_BGR2RGB))
     bubbles = mt.detect_bubbles(image_pil, threshold=WEB_DETECTION_THRESHOLD)
     text_bubbles = _attach_overlay_boxes(bubbles, image_pil.size[0], image_pil.size[1])
-    text_bubbles.extend(_fallback_high_contrast_text_regions(image_pil, text_bubbles, image_pil.size[0], image_pil.size[1]))
+    text_bubbles = _with_optional_fallback_text_regions(image_pil, text_bubbles, image_pil.size[0], image_pil.size[1])
     split_bubbles = []
     rgb = image_pil.convert("RGB")
     for bubble in text_bubbles:
@@ -1635,8 +1650,8 @@ def _ocr_region_preserve_layout(img_cv, bubble: dict, index: int) -> str:
     raw = mt.ollama(
         "glm-ocr:latest",
         (
-            "Transcribe only the words printed inside the manga bubble image. "
-            "Keep visible line breaks. Do not add instructions or explanation."
+            "OCR this crop. Output only clearly visible printed text. "
+            "Preserve line breaks. If unreadable, output nothing."
         ),
         str(crop_path),
         timeout=60,
@@ -1654,9 +1669,8 @@ def _ocr_region_preserve_layout(img_cv, bubble: dict, index: int) -> str:
     raw_retry = mt.ollama(
         "glm-ocr:latest",
         (
-            "Read any visible manga/comic text in this image. "
-            "Keep the original line breaks when possible. "
-            "Return only the text."
+            "Read only the clearly visible printed text. "
+            "Preserve line breaks. If there is no readable text, output nothing."
         ),
         str(retry_path),
         timeout=60,
@@ -1763,7 +1777,7 @@ def _normalize_slang_adaptation(value: str | None) -> str:
 def _auto_slang_adaptation_for_target(target_lang: str) -> str:
     target = (target_lang or "").strip().lower()
     if "brazil" in target or "brasil" in target or "portuguese (brazil" in target or target in {"pt-br", "pt_br"}:
-        return "br_2026"
+        return "natural_br"
     if target.startswith("english") or "united states" in target or target in {"en", "en-us", "en_us"}:
         return "us_2026"
     if target.startswith("japanese") or target in {"ja", "jp"}:
@@ -1990,6 +2004,12 @@ def _is_bad_live_translation(text: str) -> bool:
         "as an ai",
         "no text",
         "no translation",
+        "manga bubble",
+        "visible line",
+        "visible text",
+        "return only",
+        "transcribe only",
+        "read any visible",
     )
     return any(fragment in lowered for fragment in blocked)
 
@@ -2000,6 +2020,11 @@ def _is_bad_bubble_ocr(text: str) -> bool:
         return True
     words = re.findall(r"[a-zA-ZÀ-ÿ0-9']+", lowered)
     if not words:
+        return True
+    signal_chars = re.sub(r"[\W_]+", "", lowered, flags=re.UNICODE)
+    if len(signal_chars) <= 2 and lowered not in {"no", "go", "ok", "yo", "ha", "ah", "eh"}:
+        return True
+    if len(words) == 1 and words[0] in {"manga", "bubble", "image", "text", "line", "lines", "visible"}:
         return True
     repeated = Counter(words).most_common(1)[0]
     if repeated[1] >= 3 and repeated[1] / max(1, len(words)) >= 0.45:
@@ -2014,6 +2039,15 @@ def _is_bad_bubble_ocr(text: str) -> bool:
         "no explanation",
         "transcribe only",
         "read the visible",
+        "manga bubble",
+        "bubble image",
+        "words printed",
+        "text content",
+        "visible lines",
+        "visible line",
+        "keep visible",
+        "keep the visible",
+        "keeping the original",
         "markdown markdown",
         "json json",
         "html html",
