@@ -17,6 +17,7 @@ import tempfile
 import uuid
 import re
 import hashlib
+import unicodedata
 import urllib.request
 import urllib.parse
 from html.parser import HTMLParser
@@ -66,6 +67,48 @@ WEB_SPLIT_VISUAL_TEXT = os.environ.get("BTA_WEB_SPLIT_VISUAL_TEXT", "1").strip()
 WEB_FALLBACK_TEXT_REGIONS = os.environ.get("BTA_WEB_FALLBACK_TEXT_REGIONS", "0").strip().lower() in ("1", "true", "yes", "on")
 WEB_DETECTION_THRESHOLD = max(0.2, min(0.8, float(os.environ.get("BTA_WEB_DETECTION_THRESHOLD", "0.38") or "0.38")))
 LIVE_LLM_SEMAPHORE = asyncio.Semaphore(WEB_LLM_CONCURRENCY)
+
+PROMPT_ECHO_BLOCKED_FRAGMENTS = (
+    "please provide",
+    "provide the ocr",
+    "ocr text",
+    "actual text",
+    "i need the",
+    "cannot translate",
+    "can't translate",
+    "unable to translate",
+    "i'm sorry",
+    "as an ai",
+    "no text",
+    "no translation",
+    "manga bubble",
+    "bubble image",
+    "words printed",
+    "visible line",
+    "visible lines",
+    "visible text",
+    "return only",
+    "transcribe only",
+    "read any visible",
+    "read only",
+    "keep visible",
+    "keep the visible",
+    "keeping the original",
+    "preserve line",
+    "paragraph breaks",
+    "no explanation",
+    "leia apenas",
+    "apenas o texto",
+    "texto impresso",
+    "texto visivel",
+    "retorne apenas",
+    "sem explicacao",
+    "nao ha texto",
+    "nao consigo",
+    "mantenha as quebras",
+    "linhas visiveis",
+    "se nao houver texto",
+)
 
 
 def _safe_slug(value: str, fallback: str = "untitled") -> str:
@@ -1062,7 +1105,7 @@ def _split_text_groups_by_vertical_gap(group: list[dict], container: dict) -> li
     ordered = sorted(group, key=lambda b: (_box_from_bubble(b)[1], _box_from_bubble(b)[0]))
     heights = sorted(_box_from_bubble(item)[3] for item in ordered)
     median_h = heights[len(heights) // 2]
-    split_gap = max(10, median_h * 0.35)
+    split_gap = max(12, median_h * 0.85)
 
     clusters: list[list[dict]] = [[ordered[0]]]
     previous_y = _box_from_bubble(ordered[0])[1]
@@ -1081,13 +1124,13 @@ def _split_text_groups_by_vertical_gap(group: list[dict], container: dict) -> li
         clearly_new_block = (
             gap_y > split_gap
             or (
-                center_shift > max(18, median_h * 0.85)
-                and overlap_ratio < 0.62
-                and gap_y > -median_h * 0.35
+                gap_y > median_h * 0.35
+                and center_shift > max(24, median_h * 1.15)
+                and overlap_ratio < 0.55
             )
             or (
-                y - previous_y > max(median_h * 1.45, previous_h * 0.70)
-                and overlap_ratio < 0.75
+                y - previous_y > max(median_h * 2.35, previous_h * 1.20)
+                and overlap_ratio < 0.55
             )
         )
         if clearly_new_block:
@@ -1484,7 +1527,7 @@ def _split_bubble_by_visual_text(
 
     heights = sorted(y1 - y0 for _, y0, _, y1 in line_boxes)
     median_h = heights[len(heights) // 2]
-    split_gap = max(10, min(median_h * 1.15, th * 0.045))
+    split_gap = max(10, min(median_h * 1.35, th * 0.08))
     clusters: list[list[tuple[int, int, int, int]]] = [[line_boxes[0]]]
     for line in line_boxes[1:]:
         previous = clusters[-1][-1]
@@ -1492,7 +1535,7 @@ def _split_bubble_by_visual_text(
         center = (line[0] + line[2]) / 2
         gap_y = line[1] - previous[3]
         center_shift = abs(center - prev_center)
-        if gap_y > split_gap or (gap_y > median_h * 0.95 and center_shift > tw * 0.20):
+        if gap_y > split_gap or (gap_y > median_h * 0.55 and center_shift > tw * 0.24):
             clusters.append([line])
         else:
             clusters[-1].append(line)
@@ -1505,7 +1548,7 @@ def _split_bubble_by_visual_text(
         largest_gap, split_at = max(gaps, key=lambda item: item[0])
         enough_lines_each_side = split_at >= 2 and (len(line_boxes) - split_at) >= 2
         tall_text_block = th > image_height * 0.12 or th > median_h * 5.0
-        meaningful_gap = largest_gap > max(5, median_h * 0.42)
+        meaningful_gap = largest_gap > max(8, median_h * 0.90)
         if enough_lines_each_side and tall_text_block and meaningful_gap:
             clusters = [line_boxes[:split_at], line_boxes[split_at:]]
 
@@ -1636,7 +1679,139 @@ def _clean_visible_text_preserve_lines(raw: str) -> str:
 
     while compact and not compact[-1]:
         compact.pop()
-    return "\n".join(compact).strip()
+    return _remove_duplicate_dialogue_lines("\n".join(compact)).strip()
+
+
+def _fold_for_filter(text: str) -> str:
+    folded = unicodedata.normalize("NFKD", text or "")
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    return folded.lower()
+
+
+def _has_prompt_echo_fragment(text: str) -> bool:
+    folded = _fold_for_filter(text)
+    return any(fragment in folded for fragment in PROMPT_ECHO_BLOCKED_FRAGMENTS)
+
+
+def _normalized_dialogue_line(text: str) -> str:
+    folded = _fold_for_filter(text)
+    return re.sub(r"[^a-z0-9]+", " ", folded).strip()
+
+
+def _collapse_repeated_word_noise(line: str) -> str:
+    previous = None
+    current = line
+    word = r"([A-Za-z0-9À-ÿ']{3,})"
+    while previous != current:
+        previous = current
+        current = re.sub(rf"\b{word}(?:[\s,;:/-]+\1\b){{2,}}", r"\1", current, flags=re.I)
+        current = re.sub(r"\b([A-Za-z0-9À-ÿ']{5,})\s+\1\b", r"\1", current, flags=re.I)
+    return re.sub(r"\s+([,.;:!?])", r"\1", current).strip()
+
+
+def _remove_duplicate_dialogue_lines(text: str) -> str:
+    lines = text.replace("\r", "\n").split("\n")
+    result: list[str] = []
+    recent: list[str] = []
+    previous_blank = False
+    for raw_line in lines:
+        line = _collapse_repeated_word_noise(raw_line.strip())
+        if not line:
+            if result and not previous_blank:
+                result.append("")
+            previous_blank = True
+            continue
+
+        normalized = _normalized_dialogue_line(line)
+        if not normalized:
+            continue
+        if normalized in recent:
+            continue
+        if len(normalized) <= 14 and any(
+            normalized != other and normalized in other and len(other) >= len(normalized) * 2
+            for other in recent
+        ):
+            continue
+        result.append(line)
+        recent.append(normalized)
+        recent = recent[-6:]
+        previous_blank = False
+
+    while result and not result[-1]:
+        result.pop()
+    return "\n".join(result).strip()
+
+
+def _join_dialogue_lines(lines: list[str]) -> str:
+    current = ""
+    for raw_line in lines:
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            continue
+        if not current:
+            current = line
+            continue
+
+        if current.endswith("-"):
+            prefix = current[:-1].strip()
+            if 1 <= len(prefix) <= 3 and line.lower().startswith(prefix.lower()):
+                current = current.rstrip() + line.lstrip()
+            else:
+                current = current[:-1].rstrip() + line.lstrip()
+        elif re.match(r"^[,.;:!?%)}\]\u2026]", line):
+            current = current.rstrip() + line
+        elif re.search(r"[(\[{¿¡]$", current):
+            current = current.rstrip() + line.lstrip()
+        else:
+            current = f"{current.rstrip()} {line.lstrip()}"
+
+    current = re.sub(r"\s+([,.;:!?%)}\]\u2026])", r"\1", current)
+    current = re.sub(r"([({\[\u00bf\u00a1])\s+", r"\1", current)
+    current = re.sub(r"\.{3,}", "...", current)
+    current = re.sub(r"\s+", " ", current).strip()
+    return _collapse_repeated_word_noise(current)
+
+
+def _merge_clean_lines_to_paragraphs(cleaned: str) -> str:
+    if not cleaned:
+        return ""
+
+    paragraphs = re.split(r"\n\s*\n+", cleaned)
+    merged: list[str] = []
+    for paragraph in paragraphs:
+        lines = [line.strip() for line in paragraph.split("\n") if line.strip()]
+        if not lines:
+            continue
+        merged.append(_join_dialogue_lines(lines))
+    return "\n\n".join(part for part in merged if part).strip()
+
+
+def _merge_visual_lines_to_paragraphs(text: str) -> str:
+    cleaned = _remove_duplicate_dialogue_lines(_clean_visible_text_preserve_lines(text))
+    return _merge_clean_lines_to_paragraphs(cleaned)
+
+
+def _looks_like_portuguese_target(target_lang: str) -> bool:
+    folded = _fold_for_filter(target_lang)
+    return "portuguese" in folded or "portugues" in folded or "brazil" in folded or "brasil" in folded or folded in {"pt", "pt-br", "pt_br"}
+
+
+def _fallback_short_expression_translation(text: str, target_lang: str) -> str:
+    if not _looks_like_portuguese_target(target_lang):
+        return ""
+    normalized = _normalized_dialogue_line(re.sub(r"\b([a-zA-Z])[- ]+(?=[a-zA-Z])", "", text or ""))
+    replacements = {
+        "huh": "Ha?!",
+        "uh": "Uh...",
+        "damn": "Droga!",
+        "damn it": "Droga!!",
+        "what": "O que?!",
+        "th that s": "I-isso...!",
+        "th thats": "I-isso...!",
+        "thats": "I-isso...!",
+        "that s": "I-isso...!",
+    }
+    return replacements.get(normalized, "")
 
 
 def _ocr_region_preserve_layout(img_cv, bubble: dict, index: int) -> str:
@@ -1658,7 +1833,7 @@ def _ocr_region_preserve_layout(img_cv, bubble: dict, index: int) -> str:
         num_predict=260,
         temperature=0.0,
     )
-    cleaned = _clean_visible_text_preserve_lines(raw)
+    cleaned = _remove_duplicate_dialogue_lines(_clean_visible_text_preserve_lines(raw))
     if cleaned and not _is_bad_bubble_ocr(cleaned):
         print(f"     [OCR web] bubble {index}: {cleaned[:80]!r}")
         return cleaned
@@ -1677,10 +1852,15 @@ def _ocr_region_preserve_layout(img_cv, bubble: dict, index: int) -> str:
         num_predict=300,
         temperature=0.0,
     )
-    retry = _clean_visible_text_preserve_lines(raw_retry)
-    final = retry if len(retry) > len(cleaned) else cleaned
-    if _is_bad_bubble_ocr(final):
-        print(f"     [OCR web discard] bubble {index}: {final[:80]!r}")
+    retry = _remove_duplicate_dialogue_lines(_clean_visible_text_preserve_lines(raw_retry))
+    final = ""
+    for candidate in sorted((retry, cleaned), key=len, reverse=True):
+        if candidate and not _is_bad_bubble_ocr(candidate):
+            final = candidate
+            break
+    if not final:
+        rejected = retry or cleaned
+        print(f"     [OCR web discard] bubble {index}: {rejected[:80]!r}")
         return ""
     print(f"     [OCR web retry] bubble {index}: {final[:80]!r}")
     return final
@@ -1803,7 +1983,9 @@ def _slang_adaptation_instruction(mode: str | None, target_lang: str) -> str:
     return (
         f"{guide}\n"
         f"The final text must be written in {target_locale}. Do not add translator notes. "
-        "Accuracy and character intent are more important than slang. Do not insert slang where the source is neutral, ceremonial, old-fashioned, threatening, or serious."
+        "Accuracy and character intent are more important than slang. "
+        "When the source has slang, stutters, borrowed words, broken speech, or mixed-language expressions, adapt the intent naturally to the target locale. "
+        "Do not insert slang where the source is neutral, ceremonial, old-fashioned, threatening, or serious."
     )
 
 
@@ -1813,7 +1995,7 @@ def _target_lang_for_slang_adaptation(mode: str | None, target_lang: str) -> str
 
 
 def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_model: str, adaptation_mode: str = "auto") -> str:
-    cleaned = _clean_visible_text_preserve_lines(text)
+    cleaned = _merge_visual_lines_to_paragraphs(text)
     if not cleaned:
         return ""
 
@@ -1835,6 +2017,11 @@ def _translate_live_text(text: str, source_lang: str, target_lang: str, llm_mode
 {source_hint}
 {_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
 Translate the actual meaning, not just word-by-word OCR fragments.
+Treat visual line breaks as layout only. Translate complete phrases and sentences.
+Do not translate each visual line as a separate word or sentence.
+Respect punctuation, commas, periods, question marks, exclamation marks, and ellipses when joining text.
+If the OCR repeats the same word/line because of recognition noise, keep the most complete single reading.
+If the source has stutter, slang, mixed-language wording, or broken speech, adapt it naturally in the target language without duplicating words.
 Preserve names, titles, ranks, numbers, and cause/effect.
 Keep it concise enough for a speech bubble, but do not drop important meaning.
 If the OCR is partially corrupted, translate only the confident readable content without inventing missing facts.
@@ -1848,6 +2035,8 @@ OCR TEXT:
 Do not ask for OCR. Do not explain. Do not mention policies or limitations.
 Preserve the original meaning, names, titles, ranks, numbers, and tone.
 Do not summarize, embellish, or add facts that are not in the OCR.
+Collapse OCR repetition noise and translate stutters or slang as natural dialogue.
+Do not treat each visual line break as a separate word; join lines into complete phrases with correct punctuation.
 Return only the translated speech bubble text. Keep paragraph breaks if useful.
 
 OCR:
@@ -1867,6 +2056,8 @@ OCR:
         if not _is_bad_live_translation(result):
             break
         result = ""
+    if not result:
+        result = _fallback_short_expression_translation(cleaned, effective_target_lang)
 
     LIVE_TRANSLATION_CACHE[cache_key] = result
     if len(LIVE_TRANSLATION_CACHE) > 1000:
@@ -1877,7 +2068,7 @@ OCR:
 def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, target_lang: str, llm_model: str, adaptation_mode: str = "auto") -> dict[int, str]:
     cleaned_items = []
     for idx, text in items:
-        cleaned = _clean_visible_text_preserve_lines(text)
+        cleaned = _merge_visual_lines_to_paragraphs(text)
         if cleaned:
             cleaned_items.append((idx, cleaned))
     if not cleaned_items:
@@ -1908,6 +2099,11 @@ def _translate_live_text_batch(items: list[tuple[int, str]], source_lang: str, t
 {source_hint}
 {_slang_adaptation_instruction(adaptation_mode, effective_target_lang)}
 Translate for meaning and coherence first, then naturalness.
+Treat visual line breaks as layout only. Translate complete phrases and sentences.
+Do not translate each visual line as a separate word or sentence.
+Respect punctuation, commas, periods, question marks, exclamation marks, and ellipses when joining text.
+If OCR repeats the same word/line because of recognition noise, keep the most complete single reading.
+If the source has stutter, slang, mixed-language wording, or broken speech, adapt it naturally in the target language without duplicating words.
 Preserve names, titles, ranks, numbers, relationships, threats, jokes, and cause/effect.
 Keep translations natural for speech bubbles, but do not remove meaning just to make the line shorter.
 Preserve paragraph breaks when present.
@@ -1945,7 +2141,9 @@ INPUT:
         print(f"     [translate batch fallback] {len(missing)} missing item(s)")
     for idx, text in missing:
         translation = _translate_live_text(text, source_lang, target_lang, llm_model, adaptation_mode)
-        if translation:
+        if not translation:
+            translation = _fallback_short_expression_translation(text, effective_target_lang)
+        if translation and not _is_bad_live_translation(translation):
             results[idx] = translation
 
     for idx, text in cleaned_items:
@@ -1984,34 +2182,27 @@ def _clean_live_translation(raw: str) -> str:
 
     while compact and not compact[-1]:
         compact.pop()
-    return "\n".join(compact).strip()
+    cleaned = _remove_duplicate_dialogue_lines("\n".join(compact)).strip()
+    return _merge_clean_lines_to_paragraphs(cleaned)
 
 
 def _is_bad_live_translation(text: str) -> bool:
     lowered = (text or "").strip().lower()
     if not lowered:
         return True
-    blocked = (
-        "please provide",
-        "provide the ocr",
-        "ocr text",
-        "actual text",
-        "i need the",
-        "cannot translate",
-        "can't translate",
-        "unable to translate",
-        "i'm sorry",
-        "as an ai",
-        "no text",
-        "no translation",
-        "manga bubble",
-        "visible line",
-        "visible text",
-        "return only",
-        "transcribe only",
-        "read any visible",
-    )
-    return any(fragment in lowered for fragment in blocked)
+    if _has_prompt_echo_fragment(lowered):
+        return True
+    words = re.findall(r"[A-Za-z0-9À-ÿ']+", lowered)
+    if len(words) >= 6:
+        repeated = Counter(words).most_common(1)[0]
+        if len(repeated[0]) >= 3 and repeated[1] >= 4 and repeated[1] / max(1, len(words)) >= 0.38:
+            return True
+    normalized_lines = [_normalized_dialogue_line(line) for line in lowered.splitlines() if line.strip()]
+    if len(normalized_lines) >= 3:
+        counts = Counter(normalized_lines)
+        if any(line and count >= 3 for line, count in counts.items()):
+            return True
+    return False
 
 
 def _is_bad_bubble_ocr(text: str) -> bool:
@@ -2029,31 +2220,14 @@ def _is_bad_bubble_ocr(text: str) -> bool:
     repeated = Counter(words).most_common(1)[0]
     if repeated[1] >= 3 and repeated[1] / max(1, len(words)) >= 0.45:
         return True
+    if _has_prompt_echo_fragment(lowered):
+        return True
     blocked = (
-        "preserve the text",
-        "preserve line",
-        "paragraph breaks",
         "no spaces",
-        "visible text",
-        "return only",
-        "no explanation",
-        "transcribe only",
-        "read the visible",
-        "manga bubble",
-        "bubble image",
-        "words printed",
-        "text content",
-        "visible lines",
-        "visible line",
-        "keep visible",
-        "keep the visible",
-        "keeping the original",
         "markdown markdown",
         "json json",
         "html html",
         "css css",
-        "provide the ocr",
-        "no text",
         "cannot read",
         "discord",
         "scanlation",
@@ -2330,9 +2504,16 @@ async def translate_web_image_bubbles_stream(
                 events = []
                 for idx, bubble in batch:
                     translation = translations.get(idx, "")
+                    if not translation or _is_bad_live_translation(translation):
+                        events.append(_ndjson({
+                            "type": "discard",
+                            "job_id": job_id,
+                            "idx": idx,
+                            "reason": "empty_translation",
+                        }))
+                        continue
                     bubble["translation"] = translation
-                    if translation:
-                        translated_count += 1
+                    translated_count += 1
                     payload = _bubble_response_payload(image_path, [bubble])["bubbles"][0]
                     payload["idx"] = idx
                     translated_payloads.append(payload)

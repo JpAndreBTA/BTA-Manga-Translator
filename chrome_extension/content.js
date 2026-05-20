@@ -356,9 +356,83 @@ function bubbleOriginalIndex(bubble, fallbackIndex = 0) {
   return Number.isFinite(idx) && idx > 0 ? idx - 1 : fallbackIndex;
 }
 
+function foldBubbleText(text) {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function collapseRepeatedBubbleText(text) {
+  const lines = String(text || "")
+    .replace(/\r/g, "")
+    .split("\n");
+  const seen = [];
+  const out = [];
+  for (const rawLine of lines) {
+    let line = rawLine.trim();
+    line = line.replace(/\b([\p{L}\p{N}']{3,})(?:[\s,;:/-]+\1\b){2,}/giu, "$1");
+    line = line.replace(/\b([\p{L}\p{N}']{5,})\s+\1\b/giu, "$1");
+    const normalized = foldBubbleText(line).replace(/[^a-z0-9]+/g, " ").trim();
+    if (!normalized) {
+      if (out.length && out[out.length - 1]) out.push("");
+      continue;
+    }
+    if (seen.includes(normalized)) continue;
+    if (normalized.length <= 14 && seen.some((other) => other !== normalized && other.includes(normalized) && other.length >= normalized.length * 2)) {
+      continue;
+    }
+    out.push(line);
+    seen.push(normalized);
+    while (seen.length > 6) seen.shift();
+  }
+  while (out.length && !out[out.length - 1]) out.pop();
+  return out.join("\n").trim();
+}
+
+function joinDialogueLines(lines) {
+  let current = "";
+  for (const rawLine of lines) {
+    const line = String(rawLine || "").replace(/\s+/g, " ").trim();
+    if (!line) continue;
+    if (!current) {
+      current = line;
+    } else if (current.endsWith("-")) {
+      const prefix = current.slice(0, -1).trim();
+      if (prefix.length >= 1 && prefix.length <= 3 && line.toLowerCase().startsWith(prefix.toLowerCase())) {
+        current = `${current.trimEnd()}${line.trimStart()}`;
+      } else {
+        current = `${current.slice(0, -1).trimEnd()}${line.trimStart()}`;
+      }
+    } else if (/^[,.;:!?%)}\]\u2026]/u.test(line)) {
+      current = `${current.trimEnd()}${line}`;
+    } else if (/[(\[{¿¡]$/u.test(current)) {
+      current = `${current.trimEnd()}${line.trimStart()}`;
+    } else {
+      current = `${current.trimEnd()} ${line.trimStart()}`;
+    }
+  }
+  return current
+    .replace(/\s+([,.;:!?%)}\]\u2026])/gu, "$1")
+    .replace(/([({\[¿¡])\s+/gu, "$1")
+    .replace(/\.{3,}/g, "...")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function mergeSoftBubbleLineBreaks(text) {
+  return String(text || "")
+    .replace(/\r/g, "\n")
+    .split(/\n\s*\n+/)
+    .map((paragraph) => joinDialogueLines(paragraph.split(/\n+/)))
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
 function visibleBubbleTranslation(text) {
-  const value = String(text || "").trim();
-  const lowered = value.toLowerCase();
+  const value = mergeSoftBubbleLineBreaks(collapseRepeatedBubbleText(String(text || "").trim()));
+  const lowered = foldBubbleText(value);
   const blocked = [
     "please provide",
     "provide the ocr",
@@ -369,8 +443,31 @@ function visibleBubbleTranslation(text) {
     "can't translate",
     "unable to translate",
     "as an ai",
-    "no translation"
+    "no translation",
+    "manga bubble",
+    "bubble image",
+    "visible line",
+    "visible text",
+    "return only",
+    "transcribe only",
+    "read only",
+    "leia apenas",
+    "apenas o texto",
+    "texto impresso",
+    "texto visivel",
+    "retorne apenas",
+    "sem explicacao",
+    "nao ha texto",
+    "nao consigo"
   ];
+  const words = lowered.match(/[a-z0-9']+/g) || [];
+  if (words.length >= 6) {
+    const counts = new Map();
+    words.forEach((word) => counts.set(word, (counts.get(word) || 0) + 1));
+    for (const [word, count] of counts.entries()) {
+      if (word.length >= 3 && count >= 4 && count / words.length >= 0.38) return "";
+    }
+  }
   return blocked.some((fragment) => lowered.includes(fragment)) ? "" : value;
 }
 
@@ -971,6 +1068,10 @@ function handleBubbleStreamEvent(src, event) {
   }
 
   if (event.type === "bubble") {
+    if (!visibleBubbleTranslation(event.bubble?.translation)) {
+      candidates.forEach((candidate) => discardBubble(candidate, event.bubble?.idx || event.idx));
+      return;
+    }
     candidates.forEach((candidate) => updateBubbleTranslation(candidate, {
       ...event.bubble,
       image_width: event.image_width,
