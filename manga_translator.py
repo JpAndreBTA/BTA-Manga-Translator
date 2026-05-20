@@ -24,6 +24,9 @@ import json
 import time
 import base64
 import warnings
+import contextlib
+import io
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
@@ -32,6 +35,7 @@ import requests
 import torch
 from PIL import Image, ImageDraw, ImageFont
 from huggingface_hub import hf_hub_download
+os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 from transformers import AutoImageProcessor, AutoModelForObjectDetection, logging as hf_logging
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,6 +53,8 @@ FORCE_CPU = os.environ.get("BTA_FORCE_CPU", "").strip().lower() in {"1", "true",
 DEVICE = "cuda" if torch.cuda.is_available() and not FORCE_CPU else "cpu"
 USE_CUDA = DEVICE == "cuda"
 USE_CUDA_FP16 = USE_CUDA and os.environ.get("BTA_CUDA_FP16", "1").strip().lower() not in {"0", "false", "no", "off"}
+SHOW_DETECTOR_LOAD_DETAILS = os.environ.get("BTA_DETECTOR_LOAD_DETAILS", "0").strip().lower() in {"1", "true", "yes", "on"}
+SUPPRESS_TRANSFORMERS_LOAD_REPORT = os.environ.get("BTA_SUPPRESS_TRANSFORMERS_LOAD_REPORT", "1").strip().lower() not in {"0", "false", "no", "off"}
 if USE_CUDA:
     torch.backends.cudnn.benchmark = True
     try:
@@ -265,37 +271,48 @@ def cached_hf_download(repo_id, filename):
     )
 
 
+def _quiet_hf_load(factory, model_id, **kwargs):
+    if SHOW_DETECTOR_LOAD_DETAILS or not SUPPRESS_TRANSFORMERS_LOAD_REPORT:
+        return factory.from_pretrained(model_id, **kwargs)
+    capture = io.StringIO()
+    with contextlib.redirect_stdout(capture), contextlib.redirect_stderr(capture):
+        return factory.from_pretrained(model_id, **kwargs)
+
+
 def load_hf_transformers_pair(model_id):
     previous_verbosity = hf_logging.get_verbosity()
-    hf_logging.set_verbosity_error()
     load_info = None
-    for cache_dir in hf_cache_dirs():
-        try:
-            kwargs = {"cache_dir": cache_dir, "local_files_only": True}
-            processor = AutoImageProcessor.from_pretrained(model_id, **kwargs)
-            model, load_info = AutoModelForObjectDetection.from_pretrained(
-                model_id,
-                output_loading_info=True,
-                **kwargs,
-            )
-            hf_logging.set_verbosity(previous_verbosity)
-            print(f"[hf] Using cached {model_id}")
-            _print_detector_load_summary(load_info)
-            return processor, model
-        except Exception:
-            pass
+    hf_logging.set_verbosity_error()
+    try:
+        for cache_dir in hf_cache_dirs():
+            try:
+                kwargs = {"cache_dir": cache_dir, "local_files_only": True}
+                processor = _quiet_hf_load(AutoImageProcessor, model_id, **kwargs)
+                model, load_info = _quiet_hf_load(
+                    AutoModelForObjectDetection,
+                    model_id,
+                    output_loading_info=True,
+                    **kwargs,
+                )
+                print(f"[hf] Using cached {model_id}")
+                _print_detector_load_summary(load_info)
+                return processor, model
+            except Exception:
+                pass
 
-    print(f"[hf] Cache missing for {model_id}; downloading once...")
-    kwargs = {"cache_dir": HF_HUB_CACHE_DIR, "token": hf_token()}
-    processor = AutoImageProcessor.from_pretrained(model_id, **kwargs)
-    model, load_info = AutoModelForObjectDetection.from_pretrained(
-        model_id,
-        output_loading_info=True,
-        **kwargs,
-    )
-    hf_logging.set_verbosity(previous_verbosity)
-    _print_detector_load_summary(load_info)
-    return processor, model
+        print(f"[hf] Cache missing for {model_id}; downloading once...")
+        kwargs = {"cache_dir": HF_HUB_CACHE_DIR, "token": hf_token()}
+        processor = _quiet_hf_load(AutoImageProcessor, model_id, **kwargs)
+        model, load_info = _quiet_hf_load(
+            AutoModelForObjectDetection,
+            model_id,
+            output_loading_info=True,
+            **kwargs,
+        )
+        _print_detector_load_summary(load_info)
+        return processor, model
+    finally:
+        hf_logging.set_verbosity(previous_verbosity)
 
 
 def _print_detector_load_summary(load_info: dict | None):
@@ -306,11 +323,22 @@ def _print_detector_load_summary(load_info: dict | None):
     mismatched = load_info.get("mismatched_keys") or []
     if not (missing or unexpected or mismatched):
         return
-    # RT-DETR checkpoints may initialize per-decoder heads from shared heads.
-    # Keep the terminal readable while still surfacing real load metadata.
+    expected_missing = all(
+        re.fullmatch(r"(bbox_embed\.\d+\.layers\.\d+\.(?:bias|weight)|class_embed\.\d+\.(?:bias|weight))", key)
+        for key in missing
+    )
+    if expected_missing and not unexpected and not mismatched:
+        if SHOW_DETECTOR_LOAD_DETAILS:
+            print(
+                "[detector] RT-DETR checkpoint metadata: "
+                f"{len(missing)} optional prediction-head key(s) initialized; expected for this model."
+            )
+        return
+
     print(
-        "[detector] Load metadata: "
-        f"{len(missing)} missing, {len(unexpected)} unexpected, {len(mismatched)} mismatched key(s)"
+        "[detector] Load warning: "
+        f"{len(missing)} missing, {len(unexpected)} unexpected, {len(mismatched)} mismatched key(s). "
+        "Set BTA_DETECTOR_LOAD_DETAILS=1 to inspect the full Transformers report."
     )
 
 
@@ -368,22 +396,28 @@ inpaint_model = None
 inpaint_model_loaded = False
 detector_processor = None
 detector_model = None
+inpaint_model_lock = threading.Lock()
+detector_model_lock = threading.Lock()
 
 
 def get_inpainting_model():
     global inpaint_model, inpaint_model_loaded
     if not inpaint_model_loaded:
-        inpaint_model = load_inpainting_model()
-        inpaint_model_loaded = True
+        with inpaint_model_lock:
+            if not inpaint_model_loaded:
+                inpaint_model = load_inpainting_model()
+                inpaint_model_loaded = True
     return inpaint_model
 
 
 def get_detector():
     global detector_processor, detector_model
     if detector_processor is None or detector_model is None:
-        print(f"[detector] Loading {BUBBLE_MODEL_ID}...")
-        detector_processor, detector_model = load_detector()
-        print(f"[detector] Loaded {BUBBLE_MODEL_ID}")
+        with detector_model_lock:
+            if detector_processor is None or detector_model is None:
+                print(f"[detector] Loading {BUBBLE_MODEL_ID}...")
+                detector_processor, detector_model = load_detector()
+                print(f"[detector] Loaded {BUBBLE_MODEL_ID}")
     return detector_processor, detector_model
 
 
